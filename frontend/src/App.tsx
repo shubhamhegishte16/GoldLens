@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { 
   BarChart3, 
   TrendingUp, 
@@ -10,7 +10,9 @@ import {
   CircleDot,
   Layers,
   RefreshCw,
-  Coins
+  Coins,
+  AlertCircle,
+  Database
 } from 'lucide-react';
 
 import { OverviewTab } from './components/OverviewTab';
@@ -20,6 +22,7 @@ import { BacktestTab } from './components/BacktestTab';
 import { AlertsTab } from './components/AlertsTab';
 import { CalendarTab } from './components/CalendarTab';
 import { MethodologyTab } from './components/MethodologyTab';
+import type { DataStatusResponse } from './types';
 
 interface HealthData {
   status: string;
@@ -32,36 +35,50 @@ interface HealthData {
 export function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const [health, setHealth] = useState<HealthData | null>(null);
+  const [dataStatus, setDataStatus] = useState<DataStatusResponse | null>(null);
+  const [isConnected, setIsConnected] = useState<boolean | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+
+  const checkHealth = useCallback(async () => {
+    setIsRefreshing(true);
+    setConnectionError(null);
+    try {
+      const [healthRes, statusRes] = await Promise.all([
+        fetch('/api/health'),
+        fetch('/api/data/status'),
+      ]);
+
+      if (!healthRes.ok) {
+        throw new Error(`Health check returned HTTP ${healthRes.status}`);
+      }
+
+      const healthData = await healthRes.json();
+      setHealth(healthData);
+
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        setDataStatus(statusData);
+      }
+
+      setIsConnected(true);
+    } catch (err: any) {
+      setIsConnected(false);
+      setHealth(null);
+      setDataStatus(null);
+      setConnectionError(err?.message || 'Failed to connect to GoldLens backend at http://127.0.0.1:8000');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     checkHealth();
-  }, []);
-
-  const checkHealth = () => {
-    setIsRefreshing(true);
-    fetch('/api/health')
-      .then(res => res.json())
-      .then(data => {
-        setHealth(data);
-        setIsRefreshing(false);
-      })
-      .catch(() => {
-        // Fallback for standalone demo mode
-        setHealth({
-          status: 'healthy',
-          service: 'GoldLens Intelligence Engine',
-          version: '1.0.0 (Local Engine)',
-          supported_contracts: ['GOLDM', 'GOLDTEN', 'GOLDGUINEA', 'GOLDPETAL'],
-          target_purity: 999
-        });
-        setIsRefreshing(false);
-      });
-  };
+  }, [checkHealth]);
 
   const navItems = [
     { id: 'overview', label: 'Overview', icon: BarChart3, badge: null },
-    { id: 'rv', label: 'Relative Value', icon: TrendingUp, badge: 'Active' },
+    { id: 'rv', label: 'Relative Value', icon: TrendingUp, badge: 'Live API' },
     { id: 'term', label: 'Term Structure & Carry', icon: Activity, badge: null },
     { id: 'backtest', label: 'Backtest Lab', icon: FlaskConical, badge: null },
     { id: 'alerts', label: 'Alerts & Surveillance', icon: Bell, badge: '4' },
@@ -123,20 +140,34 @@ export function App() {
         <div className="p-3.5 bg-[#FFFDF7] rounded-xl border border-[#E8DFCB] text-xs shadow-sm">
           <div className="flex items-center justify-between mb-2">
             <span className="font-semibold text-[#7A7467] text-[11px]">Engine Status</span>
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#DCEBDD] text-[#3E7C59]">
-              <CircleDot className="w-2.5 h-2.5 mr-1 animate-pulse" />
-              CONNECTED
-            </span>
+            {isConnected ? (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#DCEBDD] text-[#3E7C59]">
+                <CircleDot className="w-2.5 h-2.5 mr-1 animate-pulse" />
+                CONNECTED
+              </span>
+            ) : isConnected === false ? (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#FDE8E8] text-[#DC2626]">
+                <AlertCircle className="w-2.5 h-2.5 mr-1" />
+                DISCONNECTED
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#FAF6EC] text-[#7A7467]">
+                <RefreshCw className="w-2.5 h-2.5 mr-1 animate-spin" />
+                CHECKING...
+              </span>
+            )}
           </div>
 
           <div className="space-y-1 text-[11px] text-[#7A7467]">
             <div className="flex justify-between">
               <span>Service:</span>
-              <span className="font-medium text-[#2B2A26] truncate max-w-[120px]">{health?.service || 'FastAPI'}</span>
+              <span className="font-medium text-[#2B2A26] truncate max-w-[120px]">{health?.service || (isConnected === false ? 'Offline' : 'FastAPI')}</span>
             </div>
             <div className="flex justify-between">
-              <span>Version:</span>
-              <span className="font-mono-numbers text-[#2B2A26]">{health?.version || 'v1.0.0'}</span>
+              <span>Dataset:</span>
+              <span className="font-semibold text-[#B8892B]">
+                {dataStatus?.dataset_type_badge || 'SAMPLE DATA'}
+              </span>
             </div>
             <div className="flex justify-between">
               <span>Benchmark:</span>
@@ -150,7 +181,7 @@ export function App() {
             className="w-full mt-3 py-1.5 bg-[#FAF6EC] hover:bg-[#EAE2CE] text-[#7A7467] hover:text-[#2B2A26] border border-[#E8DFCB] rounded-lg text-[10px] font-semibold flex items-center justify-center space-x-1 transition-all cursor-pointer"
           >
             <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>Sync Market Data</span>
+            <span>{isRefreshing ? 'Checking...' : 'Sync Market Data'}</span>
           </button>
         </div>
       </aside>
@@ -173,12 +204,31 @@ export function App() {
               <span>Target Standard: INR / gram @ 999 Fineness</span>
             </div>
 
-            <div className="flex items-center space-x-1.5 bg-[#FAF6EC] px-3 py-1 rounded-full border border-[#E8DFCB] text-xs font-bold text-[#3E7C59]">
-              <span className="w-2 h-2 rounded-full bg-[#3E7C59] animate-ping"></span>
-              <span>LIVE READY</span>
+            {/* Clear SAMPLE DATA badge - never present as live market data */}
+            <div className="flex items-center space-x-1.5 bg-[#FFF4DC] px-3 py-1 rounded-full border border-[#F3CE7A] text-xs font-bold text-[#B8892B]">
+              <Database className="w-3 h-3" />
+              <span>SAMPLE DATA (OFFLINE SEED)</span>
             </div>
           </div>
         </header>
+
+        {/* Backend offline warning banner */}
+        {isConnected === false && (
+          <div className="bg-[#FEF2F2] border-b border-[#FCA5A5] px-8 py-3 text-xs text-[#991B1B] flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 text-[#DC2626]" />
+              <span>
+                <strong>Backend Disconnected:</strong> {connectionError || 'Could not connect to FastAPI server at http://127.0.0.1:8000.'} Charts require the backend service to load real data.
+              </span>
+            </div>
+            <button
+              onClick={checkHealth}
+              className="px-3 py-1 bg-[#DC2626] text-white rounded font-medium hover:bg-[#B91C1C] transition-colors cursor-pointer text-[11px]"
+            >
+              Retry Connection
+            </button>
+          </div>
+        )}
 
         {/* Dynamic Tab Body */}
         <div className="p-8 max-w-7xl mx-auto w-full pb-16">
