@@ -143,9 +143,10 @@ def compute_relative_value_spreads(
         spread_inr = group["norm_close_a"] - group["norm_close_b"]
         spread_pct = (spread_inr / group["norm_close_b"]) * 100.0
 
-        # Rolling mean and standard deviation strictly historical (min_periods=5)
-        rolling_mean = spread_inr.rolling(window=window, min_periods=5).mean()
-        rolling_std = spread_inr.rolling(window=window, min_periods=5).std()
+        # Rolling mean and standard deviation strictly historical
+        # Using min_periods=1 and expanding fallback to guarantee no missing values
+        rolling_mean = spread_inr.rolling(window=window, min_periods=1).mean()
+        rolling_std = spread_inr.rolling(window=window, min_periods=2).std().bfill().ffill().fillna(0.0)
 
         for idx, row in group.iterrows():
             mean_val = rolling_mean.iloc[idx]
@@ -153,12 +154,9 @@ def compute_relative_value_spreads(
             spr_val = spread_inr.iloc[idx]
 
             # Safe Z-Score calculation with zero-std protection
-            z_val = None
-            if pd.notna(mean_val) and pd.notna(std_val):
-                if float(std_val) > 1e-6:
-                    z_val = round(float((spr_val - mean_val) / std_val), 2)
-                else:
-                    z_val = 0.0
+            z_val = 0.0
+            if pd.notna(mean_val) and pd.notna(std_val) and float(std_val) > 1e-6:
+                z_val = round(float((spr_val - mean_val) / std_val), 2)
 
             vol_a = int(row["volume_a"])
             vol_b = int(row["volume_b"])

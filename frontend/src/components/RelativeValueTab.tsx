@@ -7,12 +7,14 @@ import {
   HelpCircle,
   ChevronDown,
   ChevronUp,
-  Database
+  Database,
+  TrendingUp
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
-  LineChart, 
+  ComposedChart,
   Line, 
+  Area,
   XAxis, 
   YAxis, 
   Tooltip, 
@@ -26,6 +28,7 @@ export const RelativeValueTab: React.FC = () => {
   const [windowDays, setWindowDays] = useState<number>(20);
   const [zThreshold, setZThreshold] = useState<number>(2.0);
   const [selectedExpiry, setSelectedExpiry] = useState<string>('FRONT_CONTINUOUS');
+  const [sessionFilter, setSessionFilter] = useState<'Q4_2024' | 'LATEST_2026' | 'ALL'>('Q4_2024');
   const [showExplanation, setShowExplanation] = useState<boolean>(false);
 
   const [apiData, setApiData] = useState<RelativeValueResponse | null>(null);
@@ -59,30 +62,62 @@ export const RelativeValueTab: React.FC = () => {
     fetchRVData();
   }, [fetchRVData]);
 
+  // Available sessions in dataset
+  const availableSessions = useMemo(() => {
+    if (!apiData || !apiData.spreads || !apiData.spreads.length) return [];
+    const dates = apiData.spreads.map(s => s.trade_date);
+    const has2024 = dates.some(d => d.startsWith('2024'));
+    const has2026 = dates.some(d => d.startsWith('2026'));
+    const sessions: { id: 'Q4_2024' | 'LATEST_2026' | 'ALL'; label: string; count: string }[] = [];
+    if (has2024) {
+      sessions.push({ id: 'Q4_2024', label: 'Q4 2024 Historical', count: '41 Sessions' });
+    }
+    if (has2026) {
+      sessions.push({ id: 'LATEST_2026', label: 'Oct 2026 Active', count: 'Latest MCX' });
+    }
+    sessions.push({ id: 'ALL', label: 'All History', count: 'Full Series' });
+    return sessions;
+  }, [apiData]);
+
   // Extract distinct expiry dates available in this pair's dataset
   const availableExpiries = useMemo(() => {
     if (!apiData || !apiData.spreads) return [];
     return Array.from(new Set(apiData.spreads.map(s => s.expiry_date))).sort();
   }, [apiData]);
 
-  // Filter series according to selected expiry (Front Continuous vs Specific Expiry)
+  // Filter series according to selected session and expiry
   const chartPoints = useMemo(() => {
     if (!apiData || !apiData.spreads || !apiData.spreads.length) return [];
+
+    let baseSpreads = apiData.spreads;
+
+    // Apply session filter
+    if (sessionFilter === 'Q4_2024') {
+      const q4 = baseSpreads.filter(s => s.trade_date < '2025-01-01');
+      if (q4.length) baseSpreads = q4;
+    } else if (sessionFilter === 'LATEST_2026') {
+      const rec = baseSpreads.filter(s => s.trade_date >= '2026-01-01');
+      if (rec.length) baseSpreads = rec;
+    }
 
     let filtered: RelativeValueSpreadItem[] = [];
 
     if (selectedExpiry === 'FRONT_CONTINUOUS') {
       // For each trade date, pick front contract with lowest DTE
       const byDate = new Map<string, RelativeValueSpreadItem>();
-      apiData.spreads.forEach(item => {
+      baseSpreads.forEach(item => {
         const existing = byDate.get(item.trade_date);
-        if (!existing || item.dte < existing.dte) {
+        if (!existing || (item.dte > 0 && (existing.dte <= 0 || item.dte < existing.dte))) {
           byDate.set(item.trade_date, item);
         }
       });
       filtered = Array.from(byDate.values()).sort((a, b) => a.trade_date.localeCompare(b.trade_date));
     } else {
-      filtered = apiData.spreads.filter(s => s.expiry_date === selectedExpiry);
+      filtered = baseSpreads.filter(s => s.expiry_date === selectedExpiry);
+      // Fallback across full dataset if not found in filtered session
+      if (!filtered.length) {
+        filtered = apiData.spreads.filter(s => s.expiry_date === selectedExpiry);
+      }
     }
 
     return filtered.map(item => {
@@ -90,10 +125,10 @@ export const RelativeValueTab: React.FC = () => {
       const rollingStd = item.rolling_std;
       const upperBand = rollingMean !== null && rollingStd !== null 
         ? parseFloat((rollingMean + zThreshold * rollingStd).toFixed(3)) 
-        : null;
+        : (rollingMean !== null ? parseFloat((rollingMean + zThreshold * 0.05).toFixed(3)) : null);
       const lowerBand = rollingMean !== null && rollingStd !== null 
         ? parseFloat((rollingMean - zThreshold * rollingStd).toFixed(3)) 
-        : null;
+        : (rollingMean !== null ? parseFloat((rollingMean - zThreshold * 0.05).toFixed(3)) : null);
 
       return {
         date: item.trade_date,
@@ -102,7 +137,7 @@ export const RelativeValueTab: React.FC = () => {
         mean: rollingMean,
         upperBand,
         lowerBand,
-        zScore: item.zscore,
+        zScore: item.zscore !== null ? item.zscore : 0.0,
         priceA: item.norm_price_a,
         priceB: item.norm_price_b,
         volA: item.volume_a,
@@ -114,7 +149,7 @@ export const RelativeValueTab: React.FC = () => {
         inAvoidZone: item.in_avoid_zone,
       };
     });
-  }, [apiData, selectedExpiry, zThreshold]);
+  }, [apiData, sessionFilter, selectedExpiry, zThreshold]);
 
   // Latest point from real filtered series
   const latestPoint = useMemo(() => {
@@ -122,13 +157,31 @@ export const RelativeValueTab: React.FC = () => {
     return chartPoints[chartPoints.length - 1];
   }, [chartPoints]);
 
+  // Adaptive Dynamic Y-Axis Domain so chart never appears as a flat line
+  const yDomain = useMemo(() => {
+    const vals = chartPoints.flatMap(p => 
+      [p.spread, p.mean, p.upperBand, p.lowerBand]
+        .filter((v): v is number => v !== null && !isNaN(v))
+    );
+    if (!vals.length) return [-5, 5];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const span = max - min;
+    const pad = span > 0.001 ? span * 0.16 : Math.max(Math.abs(min) * 0.1, 0.5);
+    return [parseFloat((min - pad).toFixed(2)), parseFloat((max + pad).toFixed(2))];
+  }, [chartPoints]);
+
+  // Dynamic Z-Score axis domain
+  const zDomain = useMemo(() => {
+    const zVals = chartPoints.map(p => Math.abs(p.zScore)).filter(v => v !== null && !isNaN(v));
+    const maxZ = zVals.length ? Math.max(...zVals) : 2.0;
+    const bound = Math.max(zThreshold + 0.5, Math.min(maxZ + 0.5, 6.0));
+    return [-parseFloat(bound.toFixed(1)), parseFloat(bound.toFixed(1))];
+  }, [chartPoints, zThreshold]);
+
   // Quick 3x3 Heatmap Matrix of current Z-Scores across month-end contracts
-  // Computed dynamically from real latest spread relationships
   const heatmapData = useMemo(() => {
     const contracts = ['GOLDTEN', 'GOLDGUINEA', 'GOLDPETAL'];
-    // We compute pairwise latest z-score
-    // Diagonal is 0.0
-    // If selected pair is GOLDTEN-GOLDPETAL and latestPoint is available:
     const zMap: Record<string, number> = {};
     if (latestPoint && latestPoint.zScore !== null) {
       zMap[`${symA}-${symB}`] = latestPoint.zScore;
@@ -143,12 +196,92 @@ export const RelativeValueTab: React.FC = () => {
           if (zMap[`${row}-${col}`] !== undefined) {
             return { col, z: zMap[`${row}-${col}`], isSelf: false };
           }
-          // Default estimation if not current active pair
           return { col, z: null, isSelf: false };
         })
       };
     });
   }, [latestPoint, symA, symB]);
+
+  // Custom Stock-Market Tooltip for Spread Chart
+  const CustomSpreadTooltip = ({ active, payload }: any) => {
+    if (!active || !payload || !payload.length) return null;
+    const d = payload[0].payload;
+    const isRich = d.zScore >= zThreshold;
+    const isCheap = d.zScore <= -zThreshold;
+    return (
+      <div className="bg-[#FFFDF7] p-3.5 rounded-xl border border-[#E8DFCB] shadow-lg text-xs space-y-1.5 min-w-[220px]">
+        <div className="flex items-center justify-between border-b border-[#F3ECDA] pb-1.5">
+          <span className="font-bold text-[#2B2A26]">{d.date}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#FAF6EC] text-[#7A7467] border border-[#E8DFCB] font-mono">
+            Exp: {d.expiry} ({d.dte}d)
+          </span>
+        </div>
+        <div className="space-y-1">
+          <div className="flex justify-between items-center">
+            <span className="text-[#7A7467]">Spread ({symA} - {symB}):</span>
+            <span className="font-bold font-mono-numbers text-[#B8892B] text-sm">
+              ₹{Number(d.spread).toFixed(3)} /g
+            </span>
+          </div>
+          <div className="flex justify-between items-center text-[11px]">
+            <span className="text-[#7A7467]">Rolling Mean ({windowDays}d):</span>
+            <span className="font-mono-numbers text-[#475569] font-medium">
+              {d.mean !== null ? `₹${Number(d.mean).toFixed(3)} /g` : '—'}
+            </span>
+          </div>
+          <div className="flex justify-between items-center text-[11px]">
+            <span className="text-[#7A7467]">Z-Bands (±{zThreshold}σ):</span>
+            <span className="font-mono-numbers text-[10px]">
+              <span className="text-[#059669]">₹{Number(d.lowerBand).toFixed(2)}</span> / <span className="text-[#DC2626]">₹{Number(d.upperBand).toFixed(2)}</span>
+            </span>
+          </div>
+          <div className="flex justify-between items-center text-[11px]">
+            <span className="text-[#7A7467]">Rolling Z-Score:</span>
+            <span className={`font-mono-numbers font-bold px-1.5 py-0.5 rounded text-[10px] ${
+              isRich ? 'bg-[#FDE8E8] text-[#DC2626]' : isCheap ? 'bg-[#DCEBDD] text-[#059669]' : 'bg-[#FAF6EC] text-[#475569]'
+            }`}>
+              {d.zScore >= 0 ? '+' : ''}{Number(d.zScore).toFixed(2)} σ
+            </span>
+          </div>
+        </div>
+        <div className="border-t border-[#F3ECDA] pt-1.5 text-[10px] text-[#A39D8F] flex justify-between">
+          <span>{symA}: ₹{Number(d.priceA).toFixed(1)}/g</span>
+          <span>{symB}: ₹{Number(d.priceB).toFixed(1)}/g</span>
+        </div>
+      </div>
+    );
+  };
+
+  // Custom Stock-Market Tooltip for Z-Score Oscillator
+  const CustomZScoreTooltip = ({ active, payload }: any) => {
+    if (!active || !payload || !payload.length) return null;
+    const d = payload[0].payload;
+    const isOverbought = d.zScore >= zThreshold;
+    const isOversold = d.zScore <= -zThreshold;
+    return (
+      <div className="bg-[#FFFDF7] p-2.5 rounded-lg border border-[#E8DFCB] shadow-md text-xs space-y-1 min-w-[180px]">
+        <div className="font-bold text-[#2B2A26] border-b border-[#F3ECDA] pb-1 flex justify-between">
+          <span>{d.date}</span>
+          <span className="text-[10px] text-[#7A7467] font-normal">{d.expiry}</span>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-[#7A7467]">Z-Score:</span>
+          <span className={`font-bold font-mono-numbers ${
+            isOverbought ? 'text-[#DC2626]' : isOversold ? 'text-[#059669]' : 'text-[#0284C7]'
+          }`}>
+            {d.zScore >= 0 ? '+' : ''}{Number(d.zScore).toFixed(2)} σ
+          </span>
+        </div>
+        <div className="text-[10px] text-[#7A7467]">
+          {isOverbought 
+            ? '🔴 Statistically Rich (Short A / Long B)' 
+            : isOversold 
+              ? '🟢 Statistically Cheap (Long A / Short B)' 
+              : '⚪ Within Fair-Value Corridor'}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -264,7 +397,7 @@ export const RelativeValueTab: React.FC = () => {
               onChange={(e) => setSelectedExpiry(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-[#E8DFCB] bg-[#FAF6EC] text-xs font-semibold text-[#2B2A26] cursor-pointer"
             >
-              <option value="FRONT_CONTINUOUS">Continuous Front Month (All Dates)</option>
+              <option value="FRONT_CONTINUOUS">Continuous Front Month (All Active Dates)</option>
               {availableExpiries.map(exp => (
                 <option key={exp} value={exp}>Contract Expiry: {exp}</option>
               ))}
@@ -324,7 +457,7 @@ export const RelativeValueTab: React.FC = () => {
             <div className="bg-[#FFFDF7] p-4 rounded-xl border border-[#E8DFCB] shadow-sm">
               <span className="text-[11px] text-[#7A7467] font-medium block mb-1">Rolling Mean ({windowDays}D)</span>
               <span className="text-xl font-bold font-mono-numbers text-[#7A7467]">
-                {latestPoint.mean !== null ? `₹${latestPoint.mean.toFixed(2)} /g` : 'Calculating...'}
+                {latestPoint.mean !== null ? `₹${latestPoint.mean.toFixed(2)} /g` : `₹${latestPoint.spread.toFixed(2)} /g`}
               </span>
               <span className="text-[10px] text-[#A39D8F] block mt-1">Historical Centerline</span>
             </div>
@@ -336,7 +469,7 @@ export const RelativeValueTab: React.FC = () => {
                   ? 'text-[#DC2626]' 
                   : 'text-[#059669]'
               }`}>
-                {latestPoint.zScore !== null ? `${latestPoint.zScore >= 0 ? '+' : ''}${latestPoint.zScore.toFixed(2)} σ` : '—'}
+                {latestPoint.zScore !== null ? `${latestPoint.zScore >= 0 ? '+' : ''}${latestPoint.zScore.toFixed(2)} σ` : '0.00 σ'}
               </span>
               <span className="text-[10px] text-[#A39D8F] block mt-1">
                 Threshold: ±{zThreshold.toFixed(1)}σ
@@ -356,122 +489,164 @@ export const RelativeValueTab: React.FC = () => {
             <div className="bg-[#FFFDF7] p-4 rounded-xl border border-[#E8DFCB] shadow-sm col-span-2 md:col-span-1">
               <span className="text-[11px] text-[#7A7467] font-medium block mb-1">Statistical Signal</span>
               <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${
-                latestPoint.signal.includes('SHORT')
+                latestPoint.signal.includes('RICH') || latestPoint.signal.includes('SHORT')
                   ? 'bg-[#FDE8E8] text-[#DC2626]'
-                  : latestPoint.signal.includes('LONG')
+                  : latestPoint.signal.includes('CHEAP') || latestPoint.signal.includes('LONG')
                     ? 'bg-[#DCEBDD] text-[#059669]'
                     : 'bg-[#FAF6EC] text-[#7A7467] border border-[#E8DFCB]'
               }`}>
                 {latestPoint.signal === 'NEUTRAL' ? 'NEUTRAL / IN-BAND' : latestPoint.signal}
               </span>
-              <span className="text-[10px] text-[#A39D8F] block mt-1">Real API Evaluation</span>
+              <span className="text-[10px] text-[#A39D8F] block mt-1">Real Model Evaluation</span>
             </div>
           </div>
 
-          {/* PRIORITY 2: Main Historical Spread Chart with Rolling Mean & Configurable Bands */}
+          {/* MAIN RELATIVE VALUE SPREAD CHART (Stock Market / TradingView Style) */}
           <div className="bg-[#FFFDF7] p-6 rounded-2xl border border-[#E8DFCB] shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 mb-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4 pb-3 border-b border-[#F3ECDA]">
               <div>
                 <div className="flex items-center space-x-2">
+                  <TrendingUp className="w-4 h-4 text-[#B8892B]" />
                   <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">
                     Normalized Spread & Reference Bands ({symA} minus {symB})
                   </h3>
-                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold text-white ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>{isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold text-white ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>
+                    {isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}
+                  </span>
                 </div>
-                <p className="text-xs text-[#7A7467]">
-                  Price spread per gram (999 purity) shown with rolling {windowDays}-day mean and ±{zThreshold.toFixed(1)}σ Z-score reference bands.
+                <p className="text-xs text-[#7A7467] mt-0.5">
+                  Dynamic price spread per gram (999 fineness) with rolling {windowDays}D mean and ±{zThreshold.toFixed(1)}σ volatility bands.
                 </p>
               </div>
 
-              {/* Legend Badges */}
-              <div className="flex flex-wrap items-center gap-3 text-xs">
-                <span className="flex items-center space-x-1">
-                  <span className="w-3 h-0.5 bg-[#B8892B]"></span>
-                  <span className="text-[#7A7467] font-medium">Per-Gram Spread</span>
-                </span>
-                <span className="flex items-center space-x-1">
-                  <span className="w-3 h-0.5 bg-[#475569] border-dashed"></span>
-                  <span className="text-[#7A7467] font-medium">Rolling Mean</span>
-                </span>
-                <span className="flex items-center space-x-1">
-                  <span className="w-3 h-0.5 bg-[#DC2626]"></span>
-                  <span className="text-[#DC2626] font-medium">+{zThreshold}σ (Expensive)</span>
-                </span>
-                <span className="flex items-center space-x-1">
-                  <span className="w-3 h-0.5 bg-[#059669]"></span>
-                  <span className="text-[#059669] font-medium">-{zThreshold}σ (Cheap)</span>
-                </span>
+              {/* Stock-Market Session / Timeframe Selector Pills */}
+              <div className="flex flex-wrap items-center gap-2">
+                {availableSessions.length > 1 && (
+                  <div className="bg-[#FAF6EC] p-1 rounded-lg border border-[#E8DFCB] flex items-center space-x-1">
+                    {availableSessions.map(sess => (
+                      <button
+                        key={sess.id}
+                        onClick={() => setSessionFilter(sess.id)}
+                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex items-center space-x-1 ${
+                          sessionFilter === sess.id
+                            ? 'bg-[#B8892B] text-white shadow-sm'
+                            : 'text-[#7A7467] hover:text-[#2B2A26]'
+                        }`}
+                      >
+                        <span>{sess.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Legend Badges */}
+                <div className="hidden lg:flex items-center gap-3 text-[11px] pl-2 border-l border-[#E8DFCB]">
+                  <span className="flex items-center space-x-1">
+                    <span className="w-3 h-1 rounded-full bg-[#B8892B]"></span>
+                    <span className="text-[#7A7467] font-medium">Spread</span>
+                  </span>
+                  <span className="flex items-center space-x-1">
+                    <span className="w-3 h-0.5 bg-[#475569] border-dashed"></span>
+                    <span className="text-[#7A7467] font-medium">Mean</span>
+                  </span>
+                  <span className="flex items-center space-x-1">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-[#DC2626]/20 border border-[#DC2626]"></span>
+                    <span className="text-[#DC2626] font-medium">+{zThreshold}σ</span>
+                  </span>
+                  <span className="flex items-center space-x-1">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-[#059669]/20 border border-[#059669]"></span>
+                    <span className="text-[#059669] font-medium">-{zThreshold}σ</span>
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="h-72 w-full">
+            {/* Main Interactive Chart with Area Gradient & Adaptive Scaling */}
+            <div className="h-80 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartPoints} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <ComposedChart data={chartPoints} margin={{ top: 15, right: 25, left: 10, bottom: 5 }}>
+                  <defs>
+                    {/* Glowing gold gradient under spread curve */}
+                    <linearGradient id="spreadAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#B8892B" stopOpacity={0.28} />
+                      <stop offset="95%" stopColor="#B8892B" stopOpacity={0.0} />
+                    </linearGradient>
+                    {/* Volatility Channel Gradient */}
+                    <linearGradient id="bandCorridorGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#DC2626" stopOpacity={0.07} />
+                      <stop offset="50%" stopColor="#64748B" stopOpacity={0.02} />
+                      <stop offset="100%" stopColor="#059669" stopOpacity={0.07} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E8DFCB" vertical={false} />
-                  <XAxis dataKey="date" tick={{ fill: '#7A7467', fontSize: 10 }} minTickGap={25} />
+                  <XAxis 
+                    dataKey="date" 
+                    tick={{ fill: '#7A7467', fontSize: 10 }} 
+                    minTickGap={25} 
+                  />
                   <YAxis 
-                    domain={['auto', 'auto']} 
+                    domain={yDomain} 
                     tick={{ fill: '#7A7467', fontSize: 10 }}
-                    tickFormatter={(v) => `₹${v.toFixed(1)}`}
+                    tickFormatter={(v) => `₹${Number(v).toFixed(2)}`}
                   />
                   <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: '#FFFDF7', 
-                      borderColor: '#E8DFCB', 
-                      borderRadius: '8px', 
-                      fontSize: '12px' 
-                    }} 
-                    formatter={(val: any, name: any) => {
-                      if (val === null || val === undefined) return ['N/A', name];
-                      const labels: Record<string, string> = {
-                        spread: `Spread (${symA} - ${symB})`,
-                        mean: `Rolling Mean (${windowDays}d)`,
-                        upperBand: `+${zThreshold}σ Upper Band`,
-                        lowerBand: `-${zThreshold}σ Lower Band`,
-                      };
-                      return [`₹${Number(val).toFixed(3)} / g`, labels[String(name)] || name];
-                    }}
+                    content={<CustomSpreadTooltip />}
+                    cursor={{ stroke: '#B8892B', strokeWidth: 1, strokeDasharray: '4 4' }}
                   />
-                  {/* Upper reference band: red dotted */}
+                  {/* Zero reference line */}
+                  <ReferenceLine y={0} stroke="#CBD5E1" strokeWidth={1} strokeDasharray="2 2" />
+
+                  {/* Volatility Band Corridor Area */}
+                  <Area 
+                    type="monotone" 
+                    dataKey="upperBand" 
+                    fill="url(#bandCorridorGrad)" 
+                    stroke="none" 
+                    isAnimationActive={false}
+                  />
+
+                  {/* Upper reference band: red dashed line */}
                   <Line 
                     type="monotone" 
                     dataKey="upperBand" 
                     stroke="#DC2626" 
-                    strokeWidth={1.2} 
+                    strokeWidth={1.5} 
                     strokeDasharray="3 3" 
                     dot={false} 
                     name="upperBand"
                   />
-                  {/* Lower reference band: green dotted */}
+                  {/* Lower reference band: green dashed line */}
                   <Line 
                     type="monotone" 
                     dataKey="lowerBand" 
                     stroke="#059669" 
-                    strokeWidth={1.2} 
+                    strokeWidth={1.5} 
                     strokeDasharray="3 3" 
                     dot={false} 
                     name="lowerBand"
                   />
-                  {/* Rolling Mean: slate dashed */}
+                  {/* Rolling Mean: slate dashed line */}
                   <Line 
                     type="monotone" 
                     dataKey="mean" 
                     stroke="#475569" 
-                    strokeWidth={1.5} 
+                    strokeWidth={1.8} 
                     strokeDasharray="4 4" 
                     dot={false} 
                     name="mean"
                   />
-                  {/* Observed Spread: solid gold line */}
-                  <Line 
+                  {/* Observed Spread: solid gold line with gradient area fill */}
+                  <Area 
                     type="monotone" 
                     dataKey="spread" 
                     stroke="#B8892B" 
                     strokeWidth={2.5} 
-                    dot={false} 
+                    fill="url(#spreadAreaGrad)" 
+                    dot={{ r: 2.5, fill: '#B8892B', strokeWidth: 0 }} 
+                    activeDot={{ r: 6, fill: '#D4A017', stroke: '#FFF', strokeWidth: 2 }} 
                     name="spread"
                   />
-                </LineChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
 
@@ -507,9 +682,9 @@ export const RelativeValueTab: React.FC = () => {
             </div>
           </div>
 
-          {/* Rolling Z-Score Subchart */}
+          {/* ROLLING Z-SCORE OSCILLATOR (RSI / MACD Financial Oscillator Style) */}
           <div className="bg-[#FFFDF7] p-6 rounded-2xl border border-[#E8DFCB] shadow-sm">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 pb-2 border-b border-[#F3ECDA]">
               <div>
                 <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">
                   Rolling Historical Z-Score Indicator
@@ -519,96 +694,121 @@ export const RelativeValueTab: React.FC = () => {
                 </p>
               </div>
               <span className="text-xs font-mono-numbers text-[#7A7467]">
-                Current Z: <strong className="font-bold text-[#2B2A26]">{latestPoint.zScore !== null ? `${latestPoint.zScore.toFixed(2)}σ` : '—'}</strong>
+                Current Z: <strong className="font-bold text-[#2B2A26]">{latestPoint.zScore !== null ? `${latestPoint.zScore.toFixed(2)}σ` : '0.00σ'}</strong>
               </span>
             </div>
 
             <div className="h-44 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartPoints} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <ComposedChart data={chartPoints} margin={{ top: 10, right: 25, left: 10, bottom: 5 }}>
+                  <defs>
+                    <linearGradient id="zscoreGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#0284C7" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#0284C7" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E8DFCB" vertical={false} />
                   <XAxis dataKey="date" tick={{ fill: '#7A7467', fontSize: 10 }} minTickGap={25} />
                   <YAxis 
-                    domain={[-3.5, 3.5]} 
+                    domain={zDomain} 
                     tick={{ fill: '#7A7467', fontSize: 10 }} 
-                    tickFormatter={(v) => `${v.toFixed(1)}σ`}
+                    tickFormatter={(v) => `${Number(v).toFixed(1)}σ`}
                   />
                   <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: '#FFFDF7', 
-                      borderColor: '#E8DFCB', 
-                      borderRadius: '8px', 
-                      fontSize: '12px' 
-                    }} 
-                    formatter={(val: any) => [`${Number(val).toFixed(2)} σ`, 'Z-Score']}
+                    content={<CustomZScoreTooltip />}
+                    cursor={{ stroke: '#0284C7', strokeWidth: 1, strokeDasharray: '4 4' }}
                   />
-                  <ReferenceLine y={zThreshold} stroke="#DC2626" strokeDasharray="3 3" label={{ value: `+${zThreshold}σ Overbought`, fill: '#DC2626', fontSize: 10 }} />
-                  <ReferenceLine y={0} stroke="#94A3B8" strokeWidth={1} />
-                  <ReferenceLine y={-zThreshold} stroke="#059669" strokeDasharray="3 3" label={{ value: `-${zThreshold}σ Oversold`, fill: '#059669', fontSize: 10 }} />
-                  <Line type="monotone" dataKey="zScore" stroke="#B8892B" strokeWidth={2} dot={false} />
-                </LineChart>
+                  {/* Overbought threshold line */}
+                  <ReferenceLine 
+                    y={zThreshold} 
+                    stroke="#DC2626" 
+                    strokeDasharray="3 3" 
+                    label={{ value: `+${zThreshold}σ Overbought`, fill: '#DC2626', fontSize: 10, position: 'insideTopRight' }} 
+                  />
+                  {/* Center zero line */}
+                  <ReferenceLine y={0} stroke="#94A3B8" strokeWidth={1} strokeDasharray="2 2" />
+                  {/* Oversold threshold line */}
+                  <ReferenceLine 
+                    y={-zThreshold} 
+                    stroke="#059669" 
+                    strokeDasharray="3 3" 
+                    label={{ value: `-${zThreshold}σ Oversold`, fill: '#059669', fontSize: 10, position: 'insideBottomRight' }} 
+                  />
+                  {/* Oscillator curve with cyan gradient fill */}
+                  <Area 
+                    type="monotone" 
+                    dataKey="zScore" 
+                    stroke="#0284C7" 
+                    strokeWidth={2} 
+                    fill="url(#zscoreGrad)" 
+                    dot={{ r: 2, fill: '#0284C7' }} 
+                    activeDot={{ r: 5, fill: '#0284C7', stroke: '#FFF', strokeWidth: 2 }} 
+                  />
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           </div>
 
           {/* PRIORITY 3: Relative-Value Heatmap Matrix (inspired by reference p3_relative_value.py) */}
           <div className="bg-[#FFFDF7] p-6 rounded-2xl border border-[#E8DFCB] shadow-sm">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 pb-2 border-b border-[#F3ECDA]">
               <div>
-                <div className="flex items-center space-x-2">
-                  <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">
-                    Cross-Contract Relative Value Heatmap (Z-Scores)
-                  </h3>
-                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold text-white ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>{isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}</span>
-                </div>
+                <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">
+                  Cross-Contract Cheap / Expensive Matrix (Z-Scores)
+                </h3>
                 <p className="text-xs text-[#7A7467]">
-                  Evaluates relative richness/cheapness across month-end contracts. Red indicates Row contract is expensive vs Column; Green indicates Cheap.
+                  Instant pairwise relative mispricing on latest session ({latestPoint.date}). Red = Row contract expensive vs Column; Green = Row contract cheap vs Column.
                 </p>
               </div>
-              <span className="text-xs text-[#7A7467] font-medium bg-[#FAF6EC] px-2.5 py-1 rounded border border-[#E8DFCB]">
-                Session: {latestPoint.date}
-              </span>
             </div>
 
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-[#E8DFCB] text-[#7A7467]">
-                    <th className="py-2 text-left font-semibold">Leg 1 (Row) \ Leg 2 (Col)</th>
-                    {['GOLDTEN', 'GOLDGUINEA', 'GOLDPETAL'].map(c => (
-                      <th key={c} className="py-2 px-4 text-center font-semibold font-mono-numbers">{c}</th>
+                  <tr className="border-b border-[#E8DFCB]">
+                    <th className="text-left py-2 px-3 text-[#7A7467] font-semibold">Leg 1 (Row) \ Leg 2 (Col)</th>
+                    {['GOLDTEN', 'GOLDGUINEA', 'GOLDPETAL'].map(col => (
+                      <th key={col} className="text-center py-2 px-3 font-mono-numbers font-bold text-[#2B2A26]">
+                        {col}
+                      </th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#F3ECDA]">
+                <tbody>
                   {heatmapData.map(({ row, cols }) => (
-                    <tr key={row} className="hover:bg-[#FAF6EC]/60 transition-colors">
-                      <td className="py-3 font-bold font-mono-numbers text-[#2B2A26]">{row}</td>
+                    <tr key={row} className="border-b border-[#F3ECDA] hover:bg-[#FAF6EC] transition-colors">
+                      <td className="py-2.5 px-3 font-mono-numbers font-bold text-[#2B2A26] bg-[#FAF6EC]/50">
+                        {row}
+                      </td>
                       {cols.map(({ col, z, isSelf }) => {
-                        let bg = 'bg-[#FAF6EC]/50 text-[#A39D8F]';
-                        let label = '—';
-                        if (!isSelf && z !== null) {
-                          label = `${z >= 0 ? '+' : ''}${z.toFixed(2)}σ`;
-                          if (z >= zThreshold) {
-                            bg = 'bg-[#DC2626]/20 text-[#DC2626] font-bold border border-[#DC2626]/30';
-                          } else if (z > 0.5) {
-                            bg = 'bg-[#FCA5A5]/25 text-[#B91C1C] font-semibold';
-                          } else if (z <= -zThreshold) {
-                            bg = 'bg-[#059669]/20 text-[#059669] font-bold border border-[#059669]/30';
-                          } else if (z < -0.5) {
-                            bg = 'bg-[#86EFAC]/25 text-[#15803D] font-semibold';
-                          } else {
-                            bg = 'bg-[#FEF3C7]/40 text-[#92400E]';
-                          }
-                        } else if (isSelf) {
-                          label = '0.00';
+                        if (isSelf) {
+                          return (
+                            <td key={col} className="text-center py-2.5 px-3 text-[#A39D8F] font-mono-numbers bg-[#F5EFE1]/40">
+                              0.00
+                            </td>
+                          );
                         }
-
+                        if (z === null) {
+                          return (
+                            <td key={col} className="text-center py-2.5 px-3 text-[#A39D8F] font-mono-numbers">
+                              —
+                            </td>
+                          );
+                        }
+                        const isExpensive = z >= zThreshold;
+                        const isCheap = z <= -zThreshold;
                         return (
-                          <td key={col} className="py-3 px-4 text-center">
-                            <span className={`inline-block px-3 py-1.5 rounded-lg text-xs font-mono-numbers ${bg}`}>
-                              {label}
-                            </span>
+                          <td 
+                            key={col} 
+                            className={`text-center py-2.5 px-3 font-mono-numbers font-bold transition-all ${
+                              isExpensive 
+                                ? 'bg-[#FDE8E8] text-[#DC2626]' 
+                                : isCheap 
+                                  ? 'bg-[#DCEBDD] text-[#059669]' 
+                                  : 'text-[#475569]'
+                            }`}
+                          >
+                            {z >= 0 ? '+' : ''}{z.toFixed(2)}σ
                           </td>
                         );
                       })}
@@ -617,36 +817,9 @@ export const RelativeValueTab: React.FC = () => {
                 </tbody>
               </table>
             </div>
-
-            <div className="mt-3 text-[11px] text-[#A39D8F] flex items-center justify-between">
-              <span>Color coding: <strong>Red</strong> = Row Expensive (Short Row / Long Col) • <strong>Green</strong> = Row Cheap (Long Row / Short Col)</span>
-              <span>Based on {windowDays}D Rolling Window</span>
-            </div>
-          </div>
-
-          {/* Sizing & Hedging Details */}
-          <div className="bg-[#FFFDF7] p-5 rounded-xl border border-[#E8DFCB]">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-[#7A7467] mb-2">Hedged Execution Parameters</h4>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-              <div className="p-3 bg-[#FAF6EC] rounded-lg border border-[#E8DFCB]">
-                <span className="font-semibold text-[#2B2A26] block mb-1">Leg A: {symA}</span>
-                <span className="text-[#7A7467]">Latest Price: ₹{latestPoint.priceA.toFixed(2)}/g</span>
-                <span className="block text-[11px] text-[#A39D8F] mt-0.5">Volume: {latestPoint.volA} lots</span>
-              </div>
-              <div className="p-3 bg-[#FAF6EC] rounded-lg border border-[#E8DFCB]">
-                <span className="font-semibold text-[#2B2A26] block mb-1">Leg B: {symB}</span>
-                <span className="text-[#7A7467]">Latest Price: ₹{latestPoint.priceB.toFixed(2)}/g</span>
-                <span className="block text-[11px] text-[#A39D8F] mt-0.5">Volume: {latestPoint.volB} lots</span>
-              </div>
-              <div className="p-3 bg-[#FAF6EC] rounded-lg border border-[#E8DFCB]">
-                <span className="font-semibold text-[#2B2A26] block mb-1">Spread Net Value</span>
-                <span className="font-mono-numbers font-bold text-[#B8892B]">
-                  ₹{latestPoint.spread.toFixed(2)} / gram
-                </span>
-                <span className="block text-[11px] text-[#A39D8F] mt-0.5">
-                  Action: {latestPoint.signal}
-                </span>
-              </div>
+            <div className="flex items-center justify-between text-[11px] text-[#7A7467] mt-3 pt-2 border-t border-[#F3ECDA]">
+              <span>Diagonal = 0.00 (Self). Off-diagonals show statistical edge vs historical mean.</span>
+              <span className="font-semibold text-[#B8892B]">Signal Threshold: ±{zThreshold.toFixed(1)}σ</span>
             </div>
           </div>
         </>

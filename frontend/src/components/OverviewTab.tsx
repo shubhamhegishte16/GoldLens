@@ -48,6 +48,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
   const [priceChartMode, setPriceChartMode] = useState<'normalized' | 'raw' | 'candlestick'>('normalized');
   const [candleSymbol, setCandleSymbol] = useState<string>('GOLDTEN');
   const [showExplanation, setShowExplanation] = useState<boolean>(false);
+  const [sessionFilter, setSessionFilter] = useState<'Q4_2024' | 'LATEST_2026' | 'ALL'>('Q4_2024');
 
   // Fetch real normalized prices from FastAPI backend
   const fetchData = useCallback(async () => {
@@ -201,10 +202,47 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
     return new Map(activeTickers.map(t => [t.symbol, t.normPrice]));
   }, [activeTickers]);
 
-  // Single-contract Candlestick series (front contract)
-  const candlestickSeries = useMemo(() => {
+  // Filter time series by session to prevent 2-year flat lines
+  const displayedTimeSeries = useMemo(() => {
     if (!frontMonthTimeSeries.length) return [];
-    return frontMonthTimeSeries.map(row => {
+    if (sessionFilter === 'Q4_2024') {
+      const q4 = frontMonthTimeSeries.filter(r => r.date < '2025-01-01');
+      if (q4.length) return q4;
+    } else if (sessionFilter === 'LATEST_2026') {
+      const l26 = frontMonthTimeSeries.filter(r => r.date >= '2026-01-01');
+      if (l26.length) return l26;
+    }
+    return frontMonthTimeSeries;
+  }, [frontMonthTimeSeries, sessionFilter]);
+
+  // Adaptive Dynamic Y-Axis Domain so lines never appear flattened
+  const priceYDomain = useMemo(() => {
+    if (!displayedTimeSeries.length) return ['auto', 'auto'];
+    const keys = priceChartMode === 'normalized' 
+      ? ['GOLDTEN_norm', 'GOLDPETAL_norm', 'GOLDGUINEA_norm', 'GOLDM_norm']
+      : ['GOLDTEN_raw', 'GOLDM_raw', 'GOLDGUINEA_raw', 'GOLDPETAL_raw'];
+    
+    const vals: number[] = [];
+    displayedTimeSeries.forEach(r => {
+      keys.forEach(k => {
+        if (r[k] !== undefined && r[k] !== null && !isNaN(r[k])) {
+          vals.push(Number(r[k]));
+        }
+      });
+    });
+
+    if (!vals.length) return ['auto', 'auto'];
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const span = max - min;
+    const pad = span > 0.001 ? span * 0.12 : Math.max(min * 0.05, 10);
+    return [Math.floor(min - pad), Math.ceil(max + pad)];
+  }, [displayedTimeSeries, priceChartMode]);
+
+  // Single-contract Candlestick series (front contract) using displayed session
+  const candlestickSeries = useMemo(() => {
+    if (!displayedTimeSeries.length) return [];
+    return displayedTimeSeries.map(row => {
       const open = row[`${candleSymbol}_open`];
       const high = row[`${candleSymbol}_high`];
       const low = row[`${candleSymbol}_low`];
@@ -220,7 +258,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
         isBullish: close >= open,
       };
     }).filter(p => p.open !== undefined && p.close !== undefined);
-  }, [frontMonthTimeSeries, candleSymbol]);
+  }, [displayedTimeSeries, candleSymbol]);
 
   // Aggregated spot benchmark and total OI
   const spotBenchmark = tickerMap.get('GOLDPETAL') || tickerMap.get('GOLDTEN') || 8500;
@@ -506,6 +544,27 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
                 <option value="GOLDM">GOLDM (10g @ 995)</option>
               </select>
             )}
+
+            {/* Session Timeframe Pills */}
+            <div className="bg-[#FAF6EC] p-1 rounded-lg border border-[#E8DFCB] flex items-center space-x-1">
+              {[
+                { id: 'Q4_2024', label: 'Q4 2024 (41d)' },
+                { id: 'LATEST_2026', label: 'Oct 2026' },
+                { id: 'ALL', label: 'All History' },
+              ].map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => setSessionFilter(s.id as any)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                    sessionFilter === s.id
+                      ? 'bg-[#B8892B] text-white shadow-sm'
+                      : 'text-[#7A7467] hover:text-[#2B2A26]'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -619,13 +678,13 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
           // Line Charts (Normalized vs Raw Quotes)
           <div className="h-80 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={frontMonthTimeSeries} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
+              <LineChart data={displayedTimeSeries} margin={{ top: 15, right: 25, left: 10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E8DFCB" vertical={false} />
                 <XAxis dataKey="date" tick={{ fill: '#7A7467', fontSize: 10 }} minTickGap={25} />
                 <YAxis 
-                  domain={['auto', 'auto']} 
+                  domain={priceYDomain} 
                   tick={{ fill: '#7A7467', fontSize: 10 }}
-                  tickFormatter={(v) => `₹${v.toLocaleString('en-IN')}`}
+                  tickFormatter={(v) => `₹${Number(v).toLocaleString('en-IN')}`}
                 />
                 <Tooltip 
                   contentStyle={{ 
