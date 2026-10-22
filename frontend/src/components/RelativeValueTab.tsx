@@ -62,6 +62,18 @@ export const RelativeValueTab: React.FC = () => {
     fetchRVData();
   }, [fetchRVData]);
 
+  // Auto-switch to latest session when new data is received
+  useEffect(() => {
+    if (apiData?.spreads && apiData.spreads.length > 0) {
+      const dates = apiData.spreads.map(s => s.trade_date);
+      if (dates.some(d => d.startsWith('2026'))) {
+        setSessionFilter('LATEST_2026');
+      } else if (dates.some(d => d.startsWith('2024'))) {
+        setSessionFilter('Q4_2024');
+      }
+    }
+  }, [apiData]);
+
   // Available sessions in dataset
   const availableSessions = useMemo(() => {
     if (!apiData || !apiData.spreads || !apiData.spreads.length) return [];

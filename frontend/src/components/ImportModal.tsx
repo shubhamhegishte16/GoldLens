@@ -8,8 +8,8 @@ import {
   CheckCircle2, 
   ExternalLink,
   FileText,
-  ShieldAlert,
-  Info
+  Info,
+  Zap
 } from 'lucide-react';
 import type { DataStatusResponse } from '../types';
 
@@ -26,27 +26,37 @@ export function ImportModal({ isOpen, onClose, dataStatus, onSuccess }: ImportMo
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [helpInfo, setHelpInfo] = useState<string | null>(null);
+  const [messageTab, setMessageTab] = useState<'upload' | 'fetch' | 'sample' | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   if (!isOpen) return null;
 
-  const handleFetchLatest = async () => {
+  const handleTabChange = (tab: 'upload' | 'fetch' | 'sample') => {
+    setActiveAction(tab);
+    if (tab !== messageTab) {
+      setResultMessage(null);
+      setErrorMessage(null);
+      setHelpInfo(null);
+    }
+  };
+
+  const handleBrokerSync = async () => {
     setIsLoading(true);
+    setMessageTab('fetch');
     setResultMessage(null);
     setErrorMessage(null);
     setHelpInfo(null);
     try {
-      const res = await fetch('/api/data/refresh-latest', { method: 'POST' });
+      const res = await fetch('/api/broker/sync', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        setResultMessage(data.message || `Successfully imported ${data.records_count} records for ${data.date}`);
+        setResultMessage(data.message || `Successfully synced ${data.records_count} contracts via ${data.provider} Broker API`);
         onSuccess();
       } else {
-        setErrorMessage(data.message || 'Fetch failed');
-        if (data.help) setHelpInfo(data.help);
+        setErrorMessage(data.message || 'Broker sync failed');
       }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Network error attempting to contact backend server');
+      setErrorMessage(err?.message || 'Network error contacting broker gateway');
     } finally {
       setIsLoading(false);
     }
@@ -57,6 +67,7 @@ export function ImportModal({ isOpen, onClose, dataStatus, onSuccess }: ImportMo
     if (!selectedFile) return;
 
     setIsLoading(true);
+    setMessageTab('upload');
     setResultMessage(null);
     setErrorMessage(null);
     setHelpInfo(null);
@@ -92,6 +103,7 @@ export function ImportModal({ isOpen, onClose, dataStatus, onSuccess }: ImportMo
 
   const handleLoadSample = async () => {
     setIsLoading(true);
+    setMessageTab('sample');
     setResultMessage(null);
     setErrorMessage(null);
     setHelpInfo(null);
@@ -178,7 +190,7 @@ export function ImportModal({ isOpen, onClose, dataStatus, onSuccess }: ImportMo
         {/* Action Tabs */}
         <div className="flex border-b border-[#E8DFCB] bg-[#F3ECDA] px-6 pt-2">
           <button
-            onClick={() => setActiveAction('upload')}
+            onClick={() => handleTabChange('upload')}
             className={`px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
               activeAction === 'upload'
                 ? 'border-[#B8892B] text-[#B8892B] bg-[#FFFDF7] rounded-t-lg'
@@ -188,17 +200,17 @@ export function ImportModal({ isOpen, onClose, dataStatus, onSuccess }: ImportMo
             Upload MCX CSV
           </button>
           <button
-            onClick={() => setActiveAction('fetch')}
+            onClick={() => handleTabChange('fetch')}
             className={`px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
               activeAction === 'fetch'
                 ? 'border-[#B8892B] text-[#B8892B] bg-[#FFFDF7] rounded-t-lg'
                 : 'border-transparent text-[#7A7467] hover:text-[#2B2A26]'
             }`}
           >
-            Exchange Live Sync
+            Live Broker Feed
           </button>
           <button
-            onClick={() => setActiveAction('sample')}
+            onClick={() => handleTabChange('sample')}
             className={`px-4 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
               activeAction === 'sample'
                 ? 'border-[#B8892B] text-[#B8892B] bg-[#FFFDF7] rounded-t-lg'
@@ -281,30 +293,34 @@ export function ImportModal({ isOpen, onClose, dataStatus, onSuccess }: ImportMo
 
           {activeAction === 'fetch' && (
             <div className="space-y-4 text-xs">
-              <p className="text-[#7A7467]">
-                Attempt automated retrieval of the latest available trading session directly from the MCX web portal.
-              </p>
-
-              <div className="bg-[#FAF6EC] p-4 rounded-xl border border-[#E8DFCB] space-y-2">
-                <div className="flex items-center space-x-2 text-[#9C7320] font-bold">
-                  <ShieldAlert className="w-4 h-4 flex-shrink-0" />
-                  <span>Exchange Security &amp; WAF Notice</span>
+              <div className="bg-[#EBF5ED] p-5 rounded-xl border border-[#B6DEC0] space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 text-[#236338] font-bold">
+                    <Zap className="w-4 h-4 flex-shrink-0 text-[#2E7D32]" />
+                    <span className="text-sm">Registered Broker API Gateway Feed</span>
+                  </div>
+                  <span className="px-2.5 py-0.5 bg-[#2E7D32] text-white text-[10px] font-bold rounded-full uppercase tracking-wider">
+                    Zero WAF • Authenticated
+                  </span>
                 </div>
-                <p className="text-[#7A7467] text-[11px] leading-relaxed">
-                  MCX India uses Akamai EdgeSuite bot-mitigation and ASP.NET ViewState forms. Automated background calls typically receive HTTP 403 Forbidden.
-                  GoldLens does not bypass security or use illegal scraping. If the request is blocked, please download the daily file directly via browser and upload it under the Upload tab.
+                <p className="text-[#3F624D] text-[11px] leading-relaxed">
+                  Connects directly through licensed broker API endpoints (Zerodha Kite / Angel One adapter). 
+                  Bypasses exchange web-portal bot protection completely with authenticated, structured settlement records.
                 </p>
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <button
-                  onClick={handleFetchLatest}
-                  disabled={isLoading}
-                  className="px-4 py-2 bg-[#B8892B] hover:bg-[#9C7320] text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center space-x-1.5 shadow-sm"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-                  <span>{isLoading ? 'Attempting Retrieval...' : 'Check MCX Portal for Latest Session'}</span>
-                </button>
+                <div className="flex items-center justify-between pt-2">
+                  <div className="text-[11px] text-[#236338]/90 flex items-center space-x-1.5 font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-[#2E7D32] flex-shrink-0" />
+                    <span>Official settlement rates, open interest & contract volumes</span>
+                  </div>
+                  <button
+                    onClick={handleBrokerSync}
+                    disabled={isLoading}
+                    className="px-4 py-2 bg-[#2E7D32] hover:bg-[#236338] text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center space-x-1.5 shadow-sm"
+                  >
+                    <Zap className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                    <span>{isLoading ? 'Syncing Broker Feed...' : 'Sync via Broker Gateway'}</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -332,15 +348,15 @@ export function ImportModal({ isOpen, onClose, dataStatus, onSuccess }: ImportMo
             </div>
           )}
 
-          {/* Feedback & Error Alerts */}
-          {resultMessage && (
+          {/* Feedback & Error Alerts (Scoped to Action Tab) */}
+          {resultMessage && messageTab === activeAction && (
             <div className="p-3 bg-[#DCEBDD] border border-[#A6CDB0] text-[#236338] rounded-xl text-xs flex items-start space-x-2 animate-in fade-in">
               <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <span>{resultMessage}</span>
             </div>
           )}
 
-          {errorMessage && (
+          {errorMessage && messageTab === activeAction && (
             <div className="p-3 bg-[#FDE8E8] border border-[#FCA5A5] text-[#991B1B] rounded-xl text-xs flex items-start space-x-2 animate-in fade-in">
               <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <div className="space-y-1">

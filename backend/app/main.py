@@ -27,6 +27,7 @@ from app.fetcher import (
     import_bhavcopy_csv
 )
 from app.sample_data import load_seed_dataset_into_db
+from app.broker_client import get_broker_connection_status, sync_broker_feed
 from app.analytics import (
     normalize_bhavcopy_records,
     compute_relative_value_spreads,
@@ -246,6 +247,30 @@ def load_sample_dataset():
         "records_inserted": inserted,
         "message": "Loaded verified MCX Gold Futures sample dataset. Tagged with SAMPLE DATA (DEMO) badge."
     }
+
+
+@app.get("/api/broker/status")
+def get_broker_status():
+    """Returns registered broker API connection status, provider, and latency."""
+    return get_broker_connection_status()
+
+
+@app.post("/api/broker/sync")
+def sync_broker_data(
+    target_date: Optional[str] = Query(None, description="Target trading date YYYY-MM-DD")
+):
+    """
+    Direct broker market data sync endpoint.
+    Bypasses Akamai WAF (403 Forbidden) hurdles by communicating directly with licensed broker API.
+    """
+    success, message, count, records = sync_broker_feed(target_date_iso=target_date, is_sample=0)
+    return {
+        "success": success,
+        "message": message,
+        "records_count": count,
+        "provider": get_broker_connection_status()["provider"]
+    }
+
 
 
 # =========================================================================

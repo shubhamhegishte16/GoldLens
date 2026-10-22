@@ -7,19 +7,21 @@ Commodity Derivatives Intelligence for Multi-Size MCX Gold Futures (`GOLDM`, `GO
 ## 1. System Overview
 
 ```
- +---------------------------------------------------------------------------------------+
- |                                MCX Public Data Portal                                 |
- |                    Daily Bhavcopy (CSV/HTML) via official endpoint                    |
- +-------------------------------------------+-------------------------------------------+
-                                             |
-                                             v  [HTTP Fetch with rate-limiting & retries]
+ +-------------------------------------------+   +-------------------------------------------+
+ |         Official MCX Bhavcopy CSV         |   |         Licensed Broker API Feed          |
+ |     (Browser EOD / UDiFF CSV Download)    |   |   (Zerodha Kite / Angel One - Zero WAF)   |
+ +---------------------+---------------------+   +---------------------+---------------------+
+                       |                                               |
+                       +-----------------------+-----------------------+
+                                               |
+                                               v  [Ingestion & Multi-Contract Validation]
  +---------------------------------------------------------------------------------------+
  |                                  Ingestion & Validation                               |
  |   - Date validation: requested DD/MM/YYYY vs returned MM/DD/YYYY                      |
  |   - Holiday / malformed date detection (discard latest-date carryover)                |
  |   - Expiry parsing (e.g. 04SEP2026 -> 2026-09-04) & Symbol trim                      |
  |   - Filter target symbols (GOLDM, GOLDTEN, GOLDGUINEA, GOLDPETAL)                     |
- |   - CSV fallback upload / pre-seeded dataset loader                                   |
+ |   - Robust CSV drag-and-drop parser / Live broker feed gateway / Offline demo loader  |
  +-------------------------------------------+-------------------------------------------+
                                              |
                                              v

@@ -83,6 +83,17 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
     return { latestDate: latest, prevDate: prev, allDates: dates };
   }, [data]);
 
+  // Automatically update session filter when data is loaded
+  useEffect(() => {
+    if (latestDate) {
+      if (latestDate >= '2026-01-01') {
+        setSessionFilter('LATEST_2026');
+      } else if (latestDate < '2025-01-01') {
+        setSessionFilter('Q4_2024');
+      }
+    }
+  }, [latestDate]);
+
   // Front-month contracts per trade date (continuous active contract per symbol)
   const frontMonthTimeSeries = useMemo(() => {
     if (!data.length) return [];
@@ -308,14 +319,14 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
   return (
     <div className="space-y-6">
       {/* Sample Data Provenance Banner */}
-      <div className="bg-[#FFF9EE] border border-[#F1D8A2] rounded-xl px-4 py-2.5 flex items-center justify-between text-xs">
+      <div className="bg-[#FFF9EE] border border-[#F1D8A2] rounded-xl px-4 py-2.5 flex items-center justify-between text-xs gap-3">
         <div className="flex items-center space-x-2 text-[#9C7320]">
           <Database className="w-4 h-4 flex-shrink-0" />
           <span>
             <strong>DATA PROVENANCE:</strong> Showing <strong>{isActualData ? 'ACTUAL MCX BHAVCOPY DATA (EOD)' : 'SAMPLE DATA (DEMO)'}</strong> {isActualData ? 'from official exchange settlement records' : 'from seeded historical contracts'} ({allDates[0]} to {latestDate}, {allDates.length} trading days). Values are normalized to <strong>₹ / gram @ 999 purity</strong>.
           </span>
         </div>
-        <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wider ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>
+        <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold text-white uppercase tracking-wider flex-shrink-0 ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>
           {isActualData ? "ACTUAL MCX (EOD)" : "SAMPLE DATA"}
         </span>
       </div>

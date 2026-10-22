@@ -212,9 +212,9 @@ export function App() {
 
       {/* Main Workspace Area */}
       <main className="flex-1 flex flex-col overflow-y-auto">
-        {/* Sticky Header */}
-        <header className="h-16 border-b border-[#E8DFCB] bg-[#FFFDF7]/90 backdrop-blur-md px-8 flex items-center justify-between sticky top-0 z-20">
-          <div className="flex items-center space-x-3">
+        {/* Sticky Header with generous padding */}
+        <header className="min-h-18 py-3.5 border-b border-[#E8DFCB] bg-[#FFFDF7]/95 backdrop-blur-md px-8 pr-10 sm:px-10 sm:pr-12 lg:px-12 lg:pr-14 flex items-center justify-between sticky top-0 z-20">
+          <div className="flex items-center space-x-2.5 flex-shrink-0">
             <span className="text-xs uppercase tracking-wider font-bold text-[#7A7467]">MCX Bullion</span>
             <span className="text-[#E8DFCB]">/</span>
             <span className="text-sm font-bold text-[#2B2A26]">
@@ -222,8 +222,8 @@ export function App() {
             </span>
           </div>
 
-          <div className="flex items-center space-x-3">
-            <div className="hidden sm:flex items-center space-x-2 bg-[#F1E3BF] px-3 py-1 rounded-full border border-[#E5D2A0] text-xs font-semibold text-[#9C7320]">
+          <div className="flex items-center space-x-3 sm:space-x-4 flex-shrink-0">
+            <div className="hidden md:flex items-center space-x-2 bg-[#F1E3BF] px-3.5 py-1.5 rounded-full border border-[#E5D2A0] text-xs font-semibold text-[#9C7320]">
               <Layers className="w-3.5 h-3.5" />
               <span>Target Standard: INR / gram @ 999 Fineness</span>
             </div>
@@ -231,25 +231,25 @@ export function App() {
             {/* Dynamic Data Mode Badge */}
             {dataStatus?.data_mode === 'ACTUAL' ? (
               <div 
-                className="flex items-center space-x-1.5 bg-[#DCEBDD] px-3 py-1 rounded-full border border-[#A6CDB0] text-xs font-bold text-[#236338]"
+                className="flex items-center space-x-2 bg-[#DCEBDD] pl-3 pr-1.5 py-1 rounded-full border border-[#A6CDB0] text-xs font-bold text-[#236338]"
                 title="Active dataset is official MCX end-of-day Bhavcopy settlement prices"
               >
-                <Database className="w-3.5 h-3.5" />
-                <span>ACTUAL MCX DATA (EOD)</span>
+                <Database className="w-3.5 h-3.5 text-[#2E7D32]" />
+                <span>ACTUAL MCX (EOD)</span>
                 {dataStatus.latest_trading_date && (
-                  <span className="font-mono text-[10px] bg-white/70 px-1.5 py-0.5 rounded text-[#236338] ml-1">
+                  <span className="font-mono text-[11px] bg-white border border-[#A6CDB0] px-2 py-0.5 rounded-full text-[#236338] font-bold shadow-2xs">
                     {dataStatus.latest_trading_date}
                   </span>
                 )}
                 {dataStatus.is_stale && (
-                  <span className="bg-[#FEF3C7] text-[#92400E] px-1.5 py-0.5 rounded text-[10px] ml-1 font-semibold" title="Exchange session is more than 3 business days old">
+                  <span className="bg-[#FEF3C7] text-[#92400E] px-1.5 py-0.5 rounded text-[10px] font-semibold" title="Exchange session is more than 3 business days old">
                     STALE
                   </span>
                 )}
               </div>
             ) : (
               <div 
-                className="flex items-center space-x-1.5 bg-[#FFF4DC] px-3 py-1 rounded-full border border-[#F3CE7A] text-xs font-bold text-[#B8892B]"
+                className="flex items-center space-x-1.5 bg-[#FFF4DC] px-3.5 py-1.5 rounded-full border border-[#F3CE7A] text-xs font-bold text-[#B8892B]"
                 title="Active dataset is a seeded calendar-accurate sample dataset for offline demo"
               >
                 <Database className="w-3.5 h-3.5" />
@@ -260,10 +260,10 @@ export function App() {
             {/* Import / Sync Button */}
             <button
               onClick={() => setIsImportModalOpen(true)}
-              className="flex items-center space-x-1.5 bg-[#FFFDF7] hover:bg-[#FAF6EC] text-[#2B2A26] border border-[#E8DFCB] px-3 py-1 rounded-full text-xs font-semibold shadow-xs transition-all cursor-pointer"
+              className="flex items-center space-x-1.5 bg-[#B8892B] hover:bg-[#9C7320] text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-xs transition-all cursor-pointer"
               title="Manage MCX Bhavcopy Data & Ingestion"
             >
-              <Upload className="w-3.5 h-3.5 text-[#B8892B]" />
+              <Upload className="w-3.5 h-3.5 text-white" />
               <span>Import / Sync</span>
             </button>
           </div>

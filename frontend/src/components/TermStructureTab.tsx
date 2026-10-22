@@ -40,9 +40,9 @@ export const TermStructureTab: React.FC = () => {
     { label: '2025-10-31 (Latest Dataset Session)', value: '2025-10-31' },
   ];
 
-  const [selectedDate, setSelectedDate] = useState<string>('2025-05-15');
+  const [selectedDate, setSelectedDate] = useState<string>('');
   const [decompSymbol, setDecompSymbol] = useState<string>('GOLDTEN');
-  const [decompExpiry, setDecompExpiry] = useState<string>('2025-06-30');
+  const [decompExpiry, setDecompExpiry] = useState<string>('');
   const [showCurveExplanation, setShowCurveExplanation] = useState<boolean>(false);
   const [showDecompExplanation, setShowDecompExplanation] = useState<boolean>(false);
 
@@ -57,17 +57,33 @@ export const TermStructureTab: React.FC = () => {
   const [decompError, setDecompError] = useState<string | null>(null);
   const isActualData = termData?.data_mode === 'ACTUAL';
 
+  // Available preset dates adapting to actual vs sample dataset
+  const availablePresetDates = useMemo(() => {
+    if (termData?.data_mode === 'ACTUAL') {
+      const dates = ['2026-10-22', '2026-10-21', '2026-10-20', '2026-10-19', '2024-11-29'];
+      return dates.map(d => ({
+        label: d === termData.trade_date ? `${d} (Active)` : d,
+        value: d
+      }));
+    }
+    return PRESET_DATES;
+  }, [termData]);
+
   // Fetch Term Structure for selected date
   const fetchTermStructure = useCallback(async (dt: string) => {
     setIsTermLoading(true);
     setTermError(null);
     try {
-      const res = await fetch(`/api/analytics/term-structure?trade_date=${dt}`);
+      const url = dt ? `/api/analytics/term-structure?trade_date=${dt}` : '/api/analytics/term-structure';
+      const res = await fetch(url);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}: Failed to fetch term structure`);
       }
       const data: TermStructureResponse = await res.json();
       setTermData(data);
+      if (data.trade_date && (!dt || dt === '')) {
+        setSelectedDate(data.trade_date);
+      }
     } catch (err: any) {
       setTermError(err?.message || 'Failed to fetch term structure');
     } finally {
@@ -201,7 +217,7 @@ export const TermStructureTab: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {PRESET_DATES.map(preset => (
+            {availablePresetDates.map(preset => (
               <button
                 key={preset.value}
                 onClick={() => setSelectedDate(preset.value)}
