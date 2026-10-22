@@ -55,6 +55,7 @@ export const TermStructureTab: React.FC = () => {
   const [decompData, setDecompData] = useState<CarryDecompositionResponse | null>(null);
   const [isDecompLoading, setIsDecompLoading] = useState<boolean>(true);
   const [decompError, setDecompError] = useState<string | null>(null);
+  const isActualData = termData?.data_mode === 'ACTUAL';
 
   // Fetch Term Structure for selected date
   const fetchTermStructure = useCallback(async (dt: string) => {
@@ -146,16 +147,22 @@ export const TermStructureTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Sample Data Provenance Banner */}
-      <div className="bg-[#FFF9EE] border border-[#F1D8A2] rounded-xl px-4 py-2.5 flex items-center justify-between text-xs">
-        <div className="flex items-center space-x-2 text-[#9C7320]">
+      {/* Data Provenance Banner */}
+      <div className={`rounded-xl px-4 py-2.5 flex items-center justify-between text-xs border ${
+        isActualData 
+          ? 'bg-[#EBF5ED] border-[#B6DEC0]' 
+          : 'bg-[#FFF9EE] border-[#F1D8A2]'
+      }`}>
+        <div className={`flex items-center space-x-2 ${isActualData ? 'text-[#236338]' : 'text-[#9C7320]'}`}>
           <Database className="w-4 h-4 flex-shrink-0" />
           <span>
-            <strong>DATA PROVENANCE:</strong> Showing <strong>SAMPLE DATA</strong> from seeded MCX historical contracts. Curve points and annualized carry decay are calculated directly from backend SQLite Bhavcopy records.
+            <strong>DATA PROVENANCE:</strong> Showing <strong>{isActualData ? 'ACTUAL MCX BHAVCOPY DATA (EOD)' : 'SAMPLE DATA (DEMO)'}</strong> {isActualData ? 'from official exchange settlement records' : 'from seeded historical contracts'}. Curve points filtered by positive DTE (&gt; 0) and carry decay calculated via SQLite backend.
           </span>
         </div>
-        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#E8A317] text-white uppercase tracking-wider">
-          SAMPLE DATA
+        <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wider ${
+          isActualData ? 'bg-[#2E7D32]' : 'bg-[#E8A317]'
+        }`}>
+          {isActualData ? 'ACTUAL MCX (EOD)' : 'SAMPLE DATA'}
         </span>
       </div>
 
@@ -243,7 +250,7 @@ export const TermStructureTab: React.FC = () => {
                 <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">
                   MCX Gold Futures Forward Curve on {selectedDate} (INR / gram @ 999)
                 </h3>
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#E8A317] text-white">SAMPLE DATA</span>
+                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold text-white ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>{isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}</span>
               </div>
               <p className="text-xs text-[#7A7467]">
                 Ascending slope across Days to Expiry (DTE) reflects positive cost of carry (repo rate + storage/insurance fees).
@@ -354,7 +361,7 @@ export const TermStructureTab: React.FC = () => {
               <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">
                 Implied Annualized Carry Table ({selectedDate})
               </h3>
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#E8A317] text-white">SAMPLE DATA</span>
+              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold text-white ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>{isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}</span>
             </div>
             <p className="text-xs text-[#7A7467]">
               Computed between consecutive contract maturities: Annualized Carry % = [(F2 - F1) / F1] × (365 / ΔDTE) × 100
@@ -420,11 +427,16 @@ export const TermStructureTab: React.FC = () => {
               <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">
                 Carry Decomposition: Mechanical Roll-Down vs Genuine Curve Shift
               </h3>
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#E8A317] text-white">SAMPLE DATA</span>
+              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold text-white ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>{isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}</span>
             </div>
             <p className="text-xs text-[#7A7467] mt-0.5">
               Decomposes daily futures price movement into theoretical carry decay along the term slope versus macro bullion price shifts.
             </p>
+            {decompData?.disclaimer && (
+              <div className="mt-2 p-2 bg-[#FAF6EC] border border-[#E8DFCB] rounded-lg text-[10px] text-[#7A7467]">
+                <strong>Methodology:</strong> {decompData.disclaimer}
+              </div>
+            )}
           </div>
 
           {/* Contract Selector for Carry Decomposition */}

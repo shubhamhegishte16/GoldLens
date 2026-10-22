@@ -71,6 +71,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
     fetchData();
   }, [fetchData]);
 
+  const isActualData = useMemo(() => data.length > 0 && data[0].is_sample === 0, [data]);
+
   // Compute latest trading date and previous date for 24h delta calculations
   const { latestDate, prevDate, allDates } = useMemo(() => {
     if (!data.length) return { latestDate: null, prevDate: null, allDates: [] };
@@ -261,11 +263,11 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
         <div className="flex items-center space-x-2 text-[#9C7320]">
           <Database className="w-4 h-4 flex-shrink-0" />
           <span>
-            <strong>DATA PROVENANCE:</strong> Showing <strong>SAMPLE DATA</strong> from seeded MCX historical contracts ({allDates[0]} to {latestDate}, {allDates.length} trading days). Values are normalized to <strong>₹ / gram @ 999 purity</strong>.
+            <strong>DATA PROVENANCE:</strong> Showing <strong>{isActualData ? 'ACTUAL MCX BHAVCOPY DATA (EOD)' : 'SAMPLE DATA (DEMO)'}</strong> {isActualData ? 'from official exchange settlement records' : 'from seeded historical contracts'} ({allDates[0]} to {latestDate}, {allDates.length} trading days). Values are normalized to <strong>₹ / gram @ 999 purity</strong>.
           </span>
         </div>
-        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#E8A317] text-white uppercase tracking-wider">
-          SAMPLE DATA
+        <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wider ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>
+          {isActualData ? "ACTUAL MCX (EOD)" : "SAMPLE DATA"}
         </span>
       </div>
 
@@ -435,8 +437,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
               <h3 className="font-serif-title text-lg font-bold text-[#2B2A26]">
                 Historical Multi-Contract Price Comparison
               </h3>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#E8A317] text-white uppercase">
-                SAMPLE DATA
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>
+                {isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}
               </span>
             </div>
             <p className="text-xs text-[#7A7467] mt-0.5">
@@ -699,7 +701,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
             <div>
               <div className="flex items-center space-x-2">
                 <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">Cross-Contract Spread Matrix</h3>
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#E8A317] text-white">SAMPLE DATA</span>
+                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold text-white ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>{isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}</span>
               </div>
               <p className="text-xs text-[#7A7467]">Pairwise normalized price difference: Row minus Column (INR / gram @ 999) on {latestDate}</p>
             </div>
@@ -761,7 +763,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
             <div>
               <div className="flex items-center space-x-2">
                 <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">Contract Volume & Open Interest</h3>
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#E8A317] text-white">SAMPLE DATA</span>
+                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold text-white ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>{isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}</span>
               </div>
               <p className="text-xs text-[#7A7467]">MCX traded lots and active open interest on {latestDate} (Real API response)</p>
             </div>

@@ -199,7 +199,7 @@ def load_seed_dataset_into_db() -> int:
         export_seed_dataset_to_csv()
 
     records = generate_seed_market_data()
-    inserted = insert_bhavcopy_records(records, source="SAMPLE_SEED")
+    inserted = insert_bhavcopy_records(records, source="SAMPLE_SEED", is_sample=1, source_filename="mcx_gold_sample_bhavcopy.csv")
     log_ingestion_event(
         requested_date="2025-04-01_to_2025-10-31",
         returned_date="2025-04-01_to_2025-10-31",

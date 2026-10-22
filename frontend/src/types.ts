@@ -80,6 +80,7 @@ export interface RelativeValueResponse {
   window: number;
   z_threshold: number;
   calendar_note: string;
+  data_mode?: 'ACTUAL' | 'SAMPLE';
   total_datapoints: number;
   spreads: RelativeValueSpreadItem[];
   note?: string;
@@ -111,8 +112,10 @@ export interface ImpliedCarryRow {
 
 export interface TermStructureResponse {
   trade_date: string;
+  data_mode?: 'ACTUAL' | 'SAMPLE';
   curve_points: TermStructurePoint[];
   implied_carry_table: ImpliedCarryRow[];
+  carry_methodology?: string;
 }
 
 export interface CarryDecompositionItem {
@@ -130,6 +133,8 @@ export interface CarryDecompositionResponse {
   symbol: string;
   expiry_date: string;
   methodology: string;
+  is_estimate?: boolean;
+  disclaimer?: string;
   decomposition: CarryDecompositionItem[];
 }
 
@@ -137,12 +142,26 @@ export interface DataStatusResponse {
   total_records: number;
   total_trading_dates: number;
   date_range: {
-    start: string;
-    end: string;
+    start: string | null;
+    end: string | null;
   };
   is_sample_dataset: boolean;
   dataset_type_badge: string;
   contracts_loaded: string[];
+  data_mode?: 'ACTUAL' | 'SAMPLE';
+  active_source?: string;
+  total_actual_records?: number;
+  total_sample_records?: number;
+  latest_trading_date?: string | null;
+  is_stale?: boolean;
+  last_successful_import?: {
+    logged_at: string;
+    source: string;
+    requested_date: string;
+    rows_added: number;
+  } | null;
+  last_import_status?: string;
+  last_import_error?: string | null;
 }
 
 export interface SpreadDataPoint {

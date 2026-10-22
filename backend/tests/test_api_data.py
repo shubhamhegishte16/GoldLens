@@ -41,3 +41,46 @@ def test_records_endpoint():
     assert "records" in data
     for r in data["records"]:
         assert r["symbol"] == "GOLDTEN"
+
+
+def test_relative_value_matrix_endpoint():
+    res = client.get("/api/analytics/relative-value-matrix")
+    assert res.status_code == 200
+    data = res.json()
+    assert "contracts" in data
+    assert "matrix" in data
+    assert len(data["contracts"]) == 4
+    assert "GOLDTEN" in data["matrix"]
+
+
+def test_term_structure_endpoint():
+    res = client.get("/api/analytics/term-structure")
+    assert res.status_code == 200
+    data = res.json()
+    assert "curve_points" in data
+    assert "implied_carry_table" in data
+    assert "carry_methodology" in data
+    # Ensure all curve points have dte > 0
+    for p in data["curve_points"]:
+        assert p["dte"] > 0
+
+
+def test_carry_decomposition_endpoint():
+    res = client.get("/api/analytics/carry-decomposition?symbol=GOLDTEN")
+    assert res.status_code == 200
+    data = res.json()
+    assert "decomposition" in data
+    assert "is_estimate" in data
+    assert data["is_estimate"] is True
+    assert "disclaimer" in data
+
+
+def test_csv_upload_endpoint():
+    csv_sample = """BizDt,TckrSymb,INST_TYPE,EXPIRY_DT,OpnPric,HghPric,LwPric,ClsPric,TtlTradgVol,OpnIntrst,PrvsClsgPric
+2024-11-05,GOLDTEN,FUTCOM,28NOV2024,79200,79500,79000,79350,220,1100,79100
+"""
+    res = client.post("/api/data/upload-csv", content=csv_sample, headers={"Content-Type": "text/plain"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert data["valid_rows_inserted"] == 1

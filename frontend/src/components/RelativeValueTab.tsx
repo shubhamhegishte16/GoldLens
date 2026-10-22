@@ -31,6 +31,7 @@ export const RelativeValueTab: React.FC = () => {
   const [apiData, setApiData] = useState<RelativeValueResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const isActualData = apiData?.data_mode === 'ACTUAL';
 
   // Parse leg symbols
   const [symA, symB] = selectedPair.split('-');
@@ -151,16 +152,22 @@ export const RelativeValueTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Sample Data Provenance Banner */}
-      <div className="bg-[#FFF9EE] border border-[#F1D8A2] rounded-xl px-4 py-2.5 flex items-center justify-between text-xs">
-        <div className="flex items-center space-x-2 text-[#9C7320]">
+      {/* Data Provenance Banner */}
+      <div className={`rounded-xl px-4 py-2.5 flex items-center justify-between text-xs border ${
+        isActualData 
+          ? 'bg-[#EBF5ED] border-[#B6DEC0]' 
+          : 'bg-[#FFF9EE] border-[#F1D8A2]'
+      }`}>
+        <div className={`flex items-center space-x-2 ${isActualData ? 'text-[#236338]' : 'text-[#9C7320]'}`}>
           <Database className="w-4 h-4 flex-shrink-0" />
           <span>
-            <strong>DATA PROVENANCE:</strong> Showing <strong>SAMPLE DATA</strong> from seeded MCX historical contracts. Spreads are calculated from real backend database records via <code className="bg-[#FFFDF7] px-1 py-0.5 rounded border border-[#E8DFCB] font-mono">/api/analytics/relative-value</code>.
+            <strong>DATA PROVENANCE:</strong> Showing <strong>{isActualData ? 'ACTUAL MCX BHAVCOPY DATA (EOD)' : 'SAMPLE DATA (DEMO)'}</strong> {isActualData ? 'from official exchange settlement records' : 'from seeded historical contracts'}. Spreads calculated via <code className="bg-white/80 px-1 py-0.5 rounded border border-[#E8DFCB] font-mono">/api/analytics/relative-value</code>.
           </span>
         </div>
-        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#E8A317] text-white uppercase tracking-wider">
-          SAMPLE DATA
+        <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wider ${
+          isActualData ? 'bg-[#2E7D32]' : 'bg-[#E8A317]'
+        }`}>
+          {isActualData ? 'ACTUAL MCX (EOD)' : 'SAMPLE DATA'}
         </span>
       </div>
 
@@ -369,7 +376,7 @@ export const RelativeValueTab: React.FC = () => {
                   <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">
                     Normalized Spread & Reference Bands ({symA} minus {symB})
                   </h3>
-                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#E8A317] text-white">SAMPLE DATA</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold text-white ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>{isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}</span>
                 </div>
                 <p className="text-xs text-[#7A7467]">
                   Price spread per gram (999 purity) shown with rolling {windowDays}-day mean and ±{zThreshold.toFixed(1)}σ Z-score reference bands.
@@ -552,7 +559,7 @@ export const RelativeValueTab: React.FC = () => {
                   <h3 className="font-serif-title text-base font-bold text-[#2B2A26]">
                     Cross-Contract Relative Value Heatmap (Z-Scores)
                   </h3>
-                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#E8A317] text-white">SAMPLE DATA</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold text-white ${isActualData ? "bg-[#2E7D32]" : "bg-[#E8A317]"}`}>{isActualData ? "ACTUAL MCX" : "SAMPLE DATA"}</span>
                 </div>
                 <p className="text-xs text-[#7A7467]">
                   Evaluates relative richness/cheapness across month-end contracts. Red indicates Row contract is expensive vs Column; Green indicates Cheap.

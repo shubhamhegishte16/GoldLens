@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 import pandas as pd
+from datetime import datetime, timedelta
 
 from app.config import CONTRACT_SPECS, DEFAULT_COSTS, DEFAULT_THRESHOLDS, TARGET_PURITY
 from app.database import (
@@ -19,7 +20,12 @@ from app.database import (
     insert_bhavcopy_records,
     log_ingestion_event
 )
-from app.fetcher import fetch_bhavcopy_for_date, fetch_bhavcopy_date_range, parse_csv_stream
+from app.fetcher import (
+    fetch_bhavcopy_for_date,
+    fetch_bhavcopy_date_range,
+    parse_csv_stream,
+    import_bhavcopy_csv
+)
 from app.sample_data import load_seed_dataset_into_db
 from app.analytics import (
     normalize_bhavcopy_records,
@@ -27,6 +33,7 @@ from app.analytics import (
     build_term_structure_curve,
     decompose_daily_curve_change,
     analyze_contract_lifecycle,
+    compute_cheap_expensive_matrix,
     normalize_price
 )
 
@@ -47,6 +54,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _parse_mode(mode: Optional[str]) -> Optional[int]:
+    """Helper to convert mode parameter string to is_sample integer flag."""
+    if not mode:
+        return None
+    m = mode.strip().lower()
+    if m in ("actual", "live", "0", "eod"):
+        return 0
+    if m in ("sample", "demo", "1"):
+        return 1
+    return None
 
 
 @app.get("/api/health")
@@ -72,20 +91,29 @@ def get_contract_specs():
 
 
 # =========================================================================
-# DATA INGESTION & QUALITY ENDPOINTS (PHASE 1)
+# DATA INGESTION & QUALITY ENDPOINTS
 # =========================================================================
 
 @app.get("/api/data/status")
 def get_data_status():
-    """Returns current dataset status: total rows, date range, and whether sample or live data."""
+    """Returns current dataset status: actual vs sample counts, date range, staleness, provenance."""
     stats = get_data_quality_stats()
     return {
-        "total_records": stats["total_rows"],
-        "total_trading_dates": stats["total_trading_dates"],
-        "date_range": stats["date_range"],
-        "is_sample_dataset": stats["is_sample_dataset"],
-        "dataset_type_badge": "SAMPLE DATA" if stats["is_sample_dataset"] else "LIVE MCX DATA",
-        "contracts_loaded": [c["symbol"] for c in stats["contract_coverage"]]
+        "total_records": stats.get("total_active_records", 0),
+        "total_trading_dates": stats.get("total_trading_dates", 0),
+        "date_range": stats.get("date_range", {"start": None, "end": None}),
+        "is_sample_dataset": stats.get("is_sample_dataset", True),
+        "dataset_type_badge": stats.get("dataset_type_badge", "SAMPLE DATA (DEMO)"),
+        "data_mode": stats.get("data_mode", "SAMPLE"),
+        "active_source": stats.get("active_source", "SAMPLE"),
+        "total_actual_records": stats.get("total_actual_records", 0),
+        "total_sample_records": stats.get("total_sample_records", 0),
+        "latest_trading_date": stats.get("latest_trading_date"),
+        "is_stale": stats.get("is_stale", False),
+        "last_successful_import": stats.get("last_successful_import"),
+        "last_import_status": stats.get("last_import_status"),
+        "last_import_error": stats.get("last_import_error"),
+        "contracts_loaded": [c["symbol"] for c in stats.get("contract_coverage", [])]
     }
 
 
@@ -99,13 +127,16 @@ def get_data_quality_report():
 def get_market_records(
     start_date: Optional[str] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="End date YYYY-MM-DD"),
-    symbols: Optional[str] = Query(None, description="Comma-separated symbols, e.g. GOLDM,GOLDTEN")
+    symbols: Optional[str] = Query(None, description="Comma-separated symbols, e.g. GOLDM,GOLDTEN"),
+    mode: Optional[str] = Query(None, description="Data mode: 'actual' or 'sample'")
 ):
     """Retrieves raw filtered Bhavcopy records."""
     sym_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
-    records = query_bhavcopy_records(start_date=start_date, end_date=end_date, symbols=sym_list)
+    is_sample = _parse_mode(mode)
+    records = query_bhavcopy_records(start_date=start_date, end_date=end_date, symbols=sym_list, is_sample=is_sample)
     return {
         "count": len(records),
+        "data_mode": "ACTUAL" if (is_sample == 0 or (is_sample is None and records and records[0].get("is_sample") == 0)) else "SAMPLE",
         "records": records
     }
 
@@ -130,35 +161,77 @@ def fetch_date_range(
     return fetch_bhavcopy_date_range(start_date, end_date)
 
 
+@app.post("/api/data/refresh-latest")
+def refresh_latest_data():
+    """
+    Attempts to fetch the latest available daily Bhavcopy from the official MCX portal.
+    Checks backwards from today for recent trading sessions.
+    If Akamai EdgeSuite WAF blocks the automated request (HTTP 403), reports the exact
+    failure with transparent browser download guidance.
+    """
+    today = datetime.now().date()
+    # Check today and up to 5 business days backwards
+    for offset in range(5):
+        target_date = (today - timedelta(days=offset)).strftime("%Y-%m-%d")
+        success, message, records = fetch_bhavcopy_for_date(target_date)
+        if success and records:
+            return {
+                "success": True,
+                "date": target_date,
+                "records_count": len(records),
+                "message": f"Successfully imported {len(records)} official records for {target_date}"
+            }
+        elif "403" in message or "WAF" in message or "Akamai" in message:
+            return {
+                "success": False,
+                "date": target_date,
+                "records_count": 0,
+                "message": message,
+                "help": "Official MCX portal employs Akamai WAF and requires interactive browser session. Download the Bhavcopy CSV from https://www.mcxindia.com/market-data/bhavcopy and upload via the GoldLens UI."
+            }
+
+    return {
+        "success": False,
+        "records_count": 0,
+        "message": "No new trading session records could be retrieved from the exchange.",
+        "help": "Please download Bhavcopy CSV from https://www.mcxindia.com/market-data/bhavcopy and upload using the Import button."
+    }
+
+
 @app.post("/api/data/upload-csv")
-async def upload_bhavcopy_csv(request: Request):
-    """CSV fallback endpoint: accepts CSV string payload or raw text body."""
+async def upload_bhavcopy_csv(
+    request: Request,
+    filename: Optional[str] = Query("uploaded_bhavcopy.csv")
+):
+    """
+    CSV ingestion endpoint: accepts CSV file content as raw text or JSON payload.
+    Validates official MCX columns and stores records as actual MCX data (is_sample=0).
+    """
     body_bytes = await request.body()
     try:
         text = body_bytes.decode("utf-8")
     except UnicodeDecodeError:
         text = body_bytes.decode("latin-1")
 
+    # If sent as JSON wrapper {"csv_content": "...", "filename": "..."}
     if text.strip().startswith("{") and "csv_content" in text:
         import json
         try:
             parsed_json = json.loads(text)
             text = parsed_json.get("csv_content", "")
+            filename = parsed_json.get("filename", filename)
         except Exception:
             pass
 
-    valid_records, report = parse_csv_stream(text)
-    if valid_records:
-        inserted = insert_bhavcopy_records(valid_records, source="CSV_UPLOAD")
-        log_ingestion_event(
-            requested_date="CSV_UPLOAD",
-            returned_date=valid_records[0]["trade_date"] if valid_records else None,
-            status="SUCCESS",
-            reason=f"Uploaded CSV: {len(valid_records)} rows validated",
-            rows_added=inserted,
-            source="CSV_UPLOAD"
-        )
+    success, msg, valid_records, report = import_bhavcopy_csv(
+        text,
+        filename=filename or "uploaded_bhavcopy.csv",
+        is_sample=0
+    )
+
     return {
+        "success": success,
+        "message": msg,
         "valid_rows_inserted": len(valid_records),
         "validation_report": report
     }
@@ -166,28 +239,33 @@ async def upload_bhavcopy_csv(request: Request):
 
 @app.post("/api/data/load-sample")
 def load_sample_dataset():
-    """One-click seed for offline hackathon demos. Loads verified 2025-2026 dataset."""
+    """One-click seed for offline demos. Loads verified dataset tagged with is_sample=1."""
     inserted = load_seed_dataset_into_db()
     return {
         "success": True,
         "records_inserted": inserted,
-        "message": "Loaded verified MCX Gold Futures dataset (2025-2026). Tagged with SAMPLE DATA badge."
+        "message": "Loaded verified MCX Gold Futures sample dataset. Tagged with SAMPLE DATA (DEMO) badge."
     }
 
 
 # =========================================================================
-# ANALYTICS ENDPOINTS (PHASE 2)
+# ANALYTICS ENDPOINTS
 # =========================================================================
 
 @app.get("/api/analytics/normalized-prices")
 def get_normalized_prices(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    symbols: Optional[str] = Query(None)
+    symbols: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None, description="'actual' or 'sample'")
 ):
-    """Retrieves all market data enriched with canonical normalized prices (INR/g @ 999)."""
+    """
+    Retrieves market data enriched with canonical normalized prices (INR/g @ 999 fineness).
+    Formula: norm = (price / quote_unit_grams) * (999 / purity)
+    """
     sym_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
-    records = query_bhavcopy_records(start_date=start_date, end_date=end_date, symbols=sym_list)
+    is_sample = _parse_mode(mode)
+    records = query_bhavcopy_records(start_date=start_date, end_date=end_date, symbols=sym_list, is_sample=is_sample)
     if not records:
         return {"count": 0, "records": []}
 
@@ -206,6 +284,7 @@ def get_normalized_prices(
         "count": len(records_out),
         "normalization_formula": "norm = (price / quote_unit_grams) * (999 / purity)",
         "target_unit": "INR / gram @ 999 purity",
+        "data_mode": "ACTUAL" if df["is_sample"].iloc[0] == 0 else "SAMPLE",
         "records": records_out
     }
 
@@ -218,18 +297,20 @@ def get_relative_value_spread(
     z_threshold: float = Query(2.0, description="Abs Z-score entry threshold"),
     min_volume: int = Query(25, description="Min lots volume filter"),
     min_oi: int = Query(50, description="Min lots OI filter"),
-    avoid_zone_days: int = Query(5, description="Days before expiry to avoid")
+    avoid_zone_days: int = Query(5, description="Days before expiry to avoid"),
+    mode: Optional[str] = Query(None, description="'actual' or 'sample'")
 ):
     """
     Computes cross-contract relative value spreads:
     - Normalizes both prices to INR/g @ 999
-    - Strictly matches like-for-like expiry cycles
-    - Computes rolling Z-Score strictly from historical data
+    - Strictly matches like-for-like expiry cycles (with nearest front fallback for mismatched schedules)
+    - Computes rolling Z-Score strictly from historical data with zero-std protection
     - Evaluates liquidity filters & avoid zones
     """
-    records = query_bhavcopy_records()
+    is_sample = _parse_mode(mode)
+    records = query_bhavcopy_records(is_sample=is_sample)
     if not records:
-        return {"pair": f"{symbol_a}-{symbol_b}", "spreads": [], "note": "No data in database. Load sample dataset first."}
+        return {"pair": f"{symbol_a}-{symbol_b}", "spreads": [], "note": "No records found in active database mode."}
 
     df = normalize_bhavcopy_records(records)
     spreads = compute_relative_value_spreads(
@@ -240,7 +321,7 @@ def get_relative_value_spread(
     )
 
     # Expiry calendar note for user transparency
-    expiry_note = "Contracts share the same month-end expiry cycle (27th-31st)."
+    expiry_note = "Contracts share the standard month-end expiry cycle (27th-31st)."
     if "GOLDM" in (symbol_a, symbol_b) and (symbol_a != "GOLDM" or symbol_b != "GOLDM"):
         expiry_note = (
             "NOTICE: GOLDM expires in the 3rd-5th cycle whereas other contracts expire at month-end. "
@@ -254,55 +335,89 @@ def get_relative_value_spread(
         "window": window,
         "z_threshold": z_threshold,
         "calendar_note": expiry_note,
+        "data_mode": "ACTUAL" if df["is_sample"].iloc[0] == 0 else "SAMPLE",
         "total_datapoints": len(spreads),
         "spreads": spreads
     }
 
 
+@app.get("/api/analytics/relative-value-matrix")
+def get_relative_value_matrix(
+    mode: Optional[str] = Query(None, description="'actual' or 'sample'")
+):
+    """
+    Returns 4x4 matrix of normalized spread differences and statistical Z-Scores
+    across all active contracts on the latest available trade date.
+    """
+    is_sample = _parse_mode(mode)
+    records = query_bhavcopy_records(is_sample=is_sample)
+    if not records:
+        return {"date": None, "contracts": ["GOLDTEN", "GOLDGUINEA", "GOLDPETAL", "GOLDM"], "matrix": {}}
+
+    df = normalize_bhavcopy_records(records)
+    matrix_res = compute_cheap_expensive_matrix(df)
+    matrix_res["data_mode"] = "ACTUAL" if df["is_sample"].iloc[0] == 0 else "SAMPLE"
+    return matrix_res
+
+
 @app.get("/api/analytics/term-structure")
 def get_term_structure(
-    trade_date: Optional[str] = Query(None, description="Trade date YYYY-MM-DD. Defaults to latest available.")
+    trade_date: Optional[str] = Query(None, description="Trade date YYYY-MM-DD. Defaults to latest available."),
+    mode: Optional[str] = Query(None, description="'actual' or 'sample'")
 ):
-    """Returns futures curve (normalized price vs DTE) and implied annualized carry table."""
-    records = query_bhavcopy_records()
+    """Returns futures curve (normalized price vs positive DTE) and implied annualized carry table."""
+    is_sample = _parse_mode(mode)
+    records = query_bhavcopy_records(is_sample=is_sample)
     if not records:
         return {"trade_date": trade_date, "curve_points": [], "implied_carry_table": []}
 
     df = normalize_bhavcopy_records(records)
     target_dt = trade_date if trade_date else df["trade_date_str"].max()
     curve_data = build_term_structure_curve(df, target_dt)
+    curve_data["data_mode"] = "ACTUAL" if df["is_sample"].iloc[0] == 0 else "SAMPLE"
     return curve_data
 
 
 @app.get("/api/analytics/carry-decomposition")
 def get_carry_decomposition(
     symbol: str = Query("GOLDTEN"),
-    expiry_date: Optional[str] = Query(None)
+    expiry_date: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None, description="'actual' or 'sample'")
 ):
     """
-    Decomposes daily price changes into:
-    1. Mechanical Roll-Down (carry decay along the curve)
-    2. Genuine Curve Shift (underlying gold spot/basis repricing)
+    Decomposes daily futures price changes into:
+    1. Theoretical Roll-Down Carry Decay (analytical model using 6% annualized financing cost)
+    2. Genuine Spot/Basis Curve Shift
+    Note: MCX Bhavcopy provides futures settlement prices only; physical OTC spot bullion
+    transactions are not published in Bhavcopy.
     """
-    records = query_bhavcopy_records(symbols=[symbol])
+    is_sample = _parse_mode(mode)
+    records = query_bhavcopy_records(symbols=[symbol], is_sample=is_sample)
     if not records:
-        return {"symbol": symbol, "decomposition": []}
+        return {"symbol": symbol, "decomposition": [], "is_estimate": True}
 
     df = normalize_bhavcopy_records(records)
     target_expiry = expiry_date if expiry_date else df["expiry_date_str"].min()
-    decomp = decompose_daily_curve_change(df, symbol=symbol, expiry_date_str=target_expiry)
+    decomp_list = decompose_daily_curve_change(df, symbol=symbol, expiry_date_str=target_expiry)
     return {
         "symbol": symbol,
         "expiry_date": target_expiry,
-        "methodology": "Decomposition: Total Change = Roll-Down Carry Decay + Genuine Curve Shift",
-        "decomposition": decomp
+        "is_estimate": True,
+        "disclaimer": "THEORETICAL ESTIMATE: Daily MCX Bhavcopy publishes futures settlement prices only and does not contain physical OTC spot bullion transactions. Roll-down carry decay is estimated using an annualized benchmark carry rate (~6% repo rate), and curve shift is the residual change.",
+        "methodology": "Decomposition: Total Change = Roll-Down Carry Decay (analytical model) + Genuine Spot/Basis Curve Shift",
+        "data_mode": "ACTUAL" if df["is_sample"].iloc[0] == 0 else "SAMPLE",
+        "decomposition": decomp_list
     }
 
 
 @app.get("/api/analytics/lifecycle")
-def get_lifecycle_analytics(symbol: str = Query("GOLDTEN")):
+def get_lifecycle_analytics(
+    symbol: str = Query("GOLDTEN"),
+    mode: Optional[str] = Query(None, description="'actual' or 'sample'")
+):
     """Returns contract inception, liquidity ramp, peak OI, and avoid-zone trajectory."""
-    records = query_bhavcopy_records(symbols=[symbol])
+    is_sample = _parse_mode(mode)
+    records = query_bhavcopy_records(symbols=[symbol], is_sample=is_sample)
     if not records:
         return {"symbol": symbol, "lifecycles": []}
 
@@ -311,5 +426,6 @@ def get_lifecycle_analytics(symbol: str = Query("GOLDTEN")):
     return {
         "symbol": symbol,
         "avoid_zone_days": CONTRACT_SPECS.get(symbol, DEFAULT_THRESHOLDS).tender_period_days,
+        "data_mode": "ACTUAL" if df["is_sample"].iloc[0] == 0 else "SAMPLE",
         "lifecycles": lifecycles
     }

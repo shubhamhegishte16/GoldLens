@@ -12,7 +12,8 @@ import {
   RefreshCw,
   Coins,
   AlertCircle,
-  Database
+  Database,
+  Upload
 } from 'lucide-react';
 
 import { OverviewTab } from './components/OverviewTab';
@@ -22,6 +23,7 @@ import { BacktestTab } from './components/BacktestTab';
 import { AlertsTab } from './components/AlertsTab';
 import { CalendarTab } from './components/CalendarTab';
 import { MethodologyTab } from './components/MethodologyTab';
+import { ImportModal } from './components/ImportModal';
 import type { DataStatusResponse } from './types';
 
 interface HealthData {
@@ -39,6 +41,7 @@ export function App() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   const checkHealth = useCallback(async () => {
     setIsRefreshing(true);
@@ -163,26 +166,47 @@ export function App() {
               <span>Service:</span>
               <span className="font-medium text-[#2B2A26] truncate max-w-[120px]">{health?.service || (isConnected === false ? 'Offline' : 'FastAPI')}</span>
             </div>
-            <div className="flex justify-between">
-              <span>Dataset:</span>
-              <span className="font-semibold text-[#B8892B]">
-                {dataStatus?.dataset_type_badge || 'SAMPLE DATA'}
+            <div className="flex justify-between items-center">
+              <span>Mode:</span>
+              <span className={`font-bold ${dataStatus?.data_mode === 'ACTUAL' ? 'text-[#236338]' : 'text-[#B8892B]'}`}>
+                {dataStatus?.data_mode === 'ACTUAL' ? 'ACTUAL MCX' : 'SAMPLE DEMO'}
               </span>
             </div>
             <div className="flex justify-between">
-              <span>Benchmark:</span>
-              <span className="font-mono-numbers text-[#2B2A26] font-semibold">{health?.target_purity || 999} Fine Gold</span>
+              <span>Records:</span>
+              <span className="font-mono font-medium text-[#2B2A26]">
+                {dataStatus?.data_mode === 'ACTUAL' 
+                  ? `${dataStatus?.total_actual_records ?? 0} Actual` 
+                  : `${dataStatus?.total_sample_records ?? 0} Demo`}
+              </span>
             </div>
+            {dataStatus?.latest_trading_date && (
+              <div className="flex justify-between">
+                <span>Session:</span>
+                <span className="font-mono text-[#2B2A26] font-medium">{dataStatus.latest_trading_date}</span>
+              </div>
+            )}
           </div>
 
-          <button 
-            onClick={checkHealth}
-            disabled={isRefreshing}
-            className="w-full mt-3 py-1.5 bg-[#FAF6EC] hover:bg-[#EAE2CE] text-[#7A7467] hover:text-[#2B2A26] border border-[#E8DFCB] rounded-lg text-[10px] font-semibold flex items-center justify-center space-x-1 transition-all cursor-pointer"
-          >
-            <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>{isRefreshing ? 'Checking...' : 'Sync Market Data'}</span>
-          </button>
+          <div className="grid grid-cols-2 gap-1.5 mt-3">
+            <button 
+              onClick={checkHealth}
+              disabled={isRefreshing}
+              className="py-1.5 bg-[#FAF6EC] hover:bg-[#EAE2CE] text-[#7A7467] hover:text-[#2B2A26] border border-[#E8DFCB] rounded-lg text-[10px] font-semibold flex items-center justify-center space-x-1 transition-all cursor-pointer"
+              title="Sync and verify engine status"
+            >
+              <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>Sync</span>
+            </button>
+            <button 
+              onClick={() => setIsImportModalOpen(true)}
+              className="py-1.5 bg-[#FAF6EC] hover:bg-[#EAE2CE] text-[#B8892B] border border-[#E8DFCB] rounded-lg text-[10px] font-bold flex items-center justify-center space-x-1 transition-all cursor-pointer"
+              title="Import MCX CSV or refresh latest session"
+            >
+              <Upload className="w-3 h-3 text-[#B8892B]" />
+              <span>Import CSV</span>
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -204,11 +228,44 @@ export function App() {
               <span>Target Standard: INR / gram @ 999 Fineness</span>
             </div>
 
-            {/* Clear SAMPLE DATA badge - never present as live market data */}
-            <div className="flex items-center space-x-1.5 bg-[#FFF4DC] px-3 py-1 rounded-full border border-[#F3CE7A] text-xs font-bold text-[#B8892B]">
-              <Database className="w-3 h-3" />
-              <span>SAMPLE DATA (OFFLINE SEED)</span>
-            </div>
+            {/* Dynamic Data Mode Badge */}
+            {dataStatus?.data_mode === 'ACTUAL' ? (
+              <div 
+                className="flex items-center space-x-1.5 bg-[#DCEBDD] px-3 py-1 rounded-full border border-[#A6CDB0] text-xs font-bold text-[#236338]"
+                title="Active dataset is official MCX end-of-day Bhavcopy settlement prices"
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span>ACTUAL MCX DATA (EOD)</span>
+                {dataStatus.latest_trading_date && (
+                  <span className="font-mono text-[10px] bg-white/70 px-1.5 py-0.5 rounded text-[#236338] ml-1">
+                    {dataStatus.latest_trading_date}
+                  </span>
+                )}
+                {dataStatus.is_stale && (
+                  <span className="bg-[#FEF3C7] text-[#92400E] px-1.5 py-0.5 rounded text-[10px] ml-1 font-semibold" title="Exchange session is more than 3 business days old">
+                    STALE
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div 
+                className="flex items-center space-x-1.5 bg-[#FFF4DC] px-3 py-1 rounded-full border border-[#F3CE7A] text-xs font-bold text-[#B8892B]"
+                title="Active dataset is a seeded calendar-accurate sample dataset for offline demo"
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span>SAMPLE DATA (DEMO)</span>
+              </div>
+            )}
+
+            {/* Import / Sync Button */}
+            <button
+              onClick={() => setIsImportModalOpen(true)}
+              className="flex items-center space-x-1.5 bg-[#FFFDF7] hover:bg-[#FAF6EC] text-[#2B2A26] border border-[#E8DFCB] px-3 py-1 rounded-full text-xs font-semibold shadow-xs transition-all cursor-pointer"
+              title="Manage MCX Bhavcopy Data & Ingestion"
+            >
+              <Upload className="w-3.5 h-3.5 text-[#B8892B]" />
+              <span>Import / Sync</span>
+            </button>
           </div>
         </header>
 
@@ -246,6 +303,16 @@ export function App() {
           {activeTab === 'methodology' && <MethodologyTab />}
         </div>
       </main>
+
+      {/* MCX Bhavcopy Ingestion & Refresh Modal */}
+      <ImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        dataStatus={dataStatus}
+        onSuccess={() => {
+          checkHealth();
+        }}
+      />
     </div>
   );
 }

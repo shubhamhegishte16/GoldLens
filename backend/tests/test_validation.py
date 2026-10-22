@@ -107,6 +107,6 @@ def test_database_and_quality_report():
     assert inserted > 0
 
     stats = get_data_quality_stats()
-    assert stats["total_rows"] >= inserted
-    assert stats["is_sample_dataset"] is True
+    assert stats["total_sample_records"] >= inserted
+    assert stats["data_mode"] in ("ACTUAL", "SAMPLE")
     assert len(stats["contract_coverage"]) == 4
