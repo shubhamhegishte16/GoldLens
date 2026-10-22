@@ -184,6 +184,17 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
     }));
   }, [activeTickers]);
 
+  // Safely determine top volume & OI contracts without in-place mutation of volumeData
+  const highestVolumeContract = useMemo(() => {
+    if (!volumeData.length) return 'GOLDPETAL';
+    return [...volumeData].sort((a, b) => b.Volume - a.Volume)[0]?.name || 'GOLDPETAL';
+  }, [volumeData]);
+
+  const highestOiContract = useMemo(() => {
+    if (!volumeData.length) return 'GOLDPETAL';
+    return [...volumeData].sort((a, b) => b.OI - a.OI)[0]?.name || 'GOLDPETAL';
+  }, [volumeData]);
+
   // Cross-contract spread matrix on latest trading date
   const symbols = ['GOLDTEN', 'GOLDPETAL', 'GOLDM', 'GOLDGUINEA'];
   const tickerMap = useMemo(() => {
@@ -800,8 +811,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onSelectTab, onRefresh
             </ResponsiveContainer>
           </div>
           <div className="mt-2 text-[11px] text-[#7A7467] flex justify-between">
-            <span>Highest traded volume: <strong className="text-[#2B2A26]">{volumeData.sort((a,b)=>b.Volume-a.Volume)[0]?.name || 'GOLDPETAL'}</strong></span>
-            <span>Highest open interest: <strong className="text-[#2B2A26]">{volumeData.sort((a,b)=>b.OI-a.OI)[0]?.name || 'GOLDPETAL'}</strong></span>
+            <span>Highest traded volume: <strong className="text-[#2B2A26]">{highestVolumeContract}</strong></span>
+            <span>Highest open interest: <strong className="text-[#2B2A26]">{highestOiContract}</strong></span>
           </div>
         </div>
       </div>
