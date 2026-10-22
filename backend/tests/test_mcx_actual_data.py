@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+backend_dir = Path(__file__).resolve().parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
 """
 Unit and integration tests for actual MCX Bhavcopy data handling,
 normalization accuracy across contract purities and lot units,
@@ -29,7 +35,8 @@ from app.validator import (
 )
 from app.fetcher import (
     parse_csv_stream,
-    fetch_bhavcopy_for_date
+    fetch_bhavcopy_for_date,
+    import_bhavcopy_csv
 )
 
 
@@ -228,3 +235,93 @@ class TestOfficialSchemaIngestion:
             assert success is False
             assert len(records) == 0
             assert "Akamai" in msg or "403" in msg or "WAF" in msg
+
+
+class TestBhavCopyDateWiseSchema:
+    """
+    Regression tests using representative rows from official MCX BhavCopyDateWise CSV files.
+    Specifically validates:
+    - Date format 'DD Mon YYYY' (e.g. '21 Oct 2026' -> '2026-10-21')
+    - Header mapping with spaces and parentheses:
+      'Instrument Name', 'Expiry Date', 'Option Type', 'Previous Close',
+      'Volume(Lots)', 'Value(Lacs)', 'Open Interest(Lots)'
+    - Strict inclusion of 4 gold contracts: GOLDM, GOLDTEN, GOLDGUINEA, GOLDPETAL
+    - Filtering of Options (OPTFUT / CE / PE)
+    - Filtering of non-target commodities (GOLD institutional 1kg, SILVER, etc.)
+    """
+
+    SAMPLE_BHAVCOPY_CSV = (
+        "Date,Instrument Name,Symbol,Expiry Date,Option Type,Strike Price,Open,High,Low,Close,Previous Close,Volume(Lots),Volume(In 000's),Value(Lacs),Open Interest(Lots)\n"
+        "21 Oct 2026,FUTCOM,GOLDGUINEA,30OCT2026,-,0.00,116800.00,117280.00,116424.00,116648.00,117020.00,5329,42.632,6211.70,13034\n"
+        "21 Oct 2026,FUTCOM,GOLDM,05NOV2026,-,0.00,144700.00,145180.00,144400.00,144584.00,145015.00,26349,263.490,380840.40,50749\n"
+        "21 Oct 2026,FUTCOM,GOLDPETAL,30OCT2026,-,0.00,14605.00,14644.00,14571.00,14581.00,14627.00,103087,103.087,15019.79,180244\n"
+        "21 Oct 2026,FUTCOM,GOLDTEN,30OCT2026,-,0.00,145199.00,145610.00,144888.00,145015.00,145473.00,11545,115.450,16733.29,27919\n"
+        "21 Oct 2026,OPTFUT,GOLDM,05NOV2026,CE,145000.00,1100.00,1350.00,950.00,1020.00,1150.00,150,1.500,21.75,320\n"
+        "21 Oct 2026,FUTCOM,GOLD,05DEC2026,-,0.00,145000.00,145500.00,144800.00,145100.00,145200.00,1000,100.000,14500.00,2500\n"
+        "21 Oct 2026,FUTCOM,SILVER,05DEC2026,-,0.00,98000.00,98500.00,97800.00,98200.00,98100.00,500,15.000,4900.00,1200\n"
+    )
+
+    def test_bhavcopy_datewise_parsing(self):
+        records, report = parse_csv_stream(self.SAMPLE_BHAVCOPY_CSV)
+
+        # 4 target gold futures contracts must be accepted
+        assert len(records) == 4
+        symbols = {r["symbol"] for r in records}
+        assert symbols == {"GOLDGUINEA", "GOLDM", "GOLDPETAL", "GOLDTEN"}
+
+        # Verify trade date translation for all records
+        for r in records:
+            assert r["trade_date"] == "2026-10-21"
+
+        # Check GOLDGUINEA record details
+        guinea = next(r for r in records if r["symbol"] == "GOLDGUINEA")
+        assert guinea["expiry_date"] == "2026-10-30"
+        assert guinea["close_price"] == 116648.0
+        assert guinea["previous_close"] == 117020.0
+        assert guinea["volume"] == 5329
+        assert guinea["open_interest"] == 13034
+        assert pytest.approx(guinea["value_in_lakhs"], 0.01) == 6211.70
+
+        # Check GOLDM record details
+        goldm = next(r for r in records if r["symbol"] == "GOLDM")
+        assert goldm["expiry_date"] == "2026-11-05"
+        assert goldm["close_price"] == 144584.0
+        assert goldm["previous_close"] == 145015.0
+        assert goldm["volume"] == 26349
+        assert goldm["open_interest"] == 50749
+        assert pytest.approx(goldm["value_in_lakhs"], 0.01) == 380840.40
+
+        # Check GOLDPETAL record details
+        petal = next(r for r in records if r["symbol"] == "GOLDPETAL")
+        assert petal["expiry_date"] == "2026-10-30"
+        assert petal["close_price"] == 14581.0
+        assert petal["previous_close"] == 14627.0
+        assert petal["volume"] == 103087
+        assert petal["open_interest"] == 180244
+        assert pytest.approx(petal["value_in_lakhs"], 0.01) == 15019.79
+
+        # Check GOLDTEN record details
+        goldten = next(r for r in records if r["symbol"] == "GOLDTEN")
+        assert goldten["expiry_date"] == "2026-10-30"
+        assert goldten["close_price"] == 145015.0
+        assert goldten["previous_close"] == 145473.0
+        assert goldten["volume"] == 11545
+        assert goldten["open_interest"] == 27919
+        assert pytest.approx(goldten["value_in_lakhs"], 0.01) == 16733.29
+
+        # Verify skipped items
+        skipped = report["skipped_reasons"]
+        assert skipped.get("FILTERED_OPTIONS_CONTRACT", 0) == 1
+        assert skipped.get("FILTERED_SYMBOL_GOLD", 0) == 1
+        assert skipped.get("FILTERED_SYMBOL_SILVER", 0) == 1
+
+    def test_import_bhavcopy_csv_actual_provenance(self):
+        success, msg, records, report = import_bhavcopy_csv(
+            self.SAMPLE_BHAVCOPY_CSV,
+            filename="BhavCopyDateWise_21102026.csv",
+            is_sample=0
+        )
+        assert success is True
+        assert len(records) == 4
+        assert "Successfully imported 4 records" in msg
+        assert "ACTUAL MCX" in msg
