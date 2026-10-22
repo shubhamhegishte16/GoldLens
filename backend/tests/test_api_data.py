@@ -84,3 +84,19 @@ def test_csv_upload_endpoint():
     data = res.json()
     assert data["success"] is True
     assert data["valid_rows_inserted"] == 1
+
+
+def test_refresh_latest_endpoint_methods():
+    # Test GET
+    res_get = client.get("/api/data/refresh-latest")
+    assert res_get.status_code == 200
+    data_get = res_get.json()
+    assert "success" in data_get
+    assert "records_count" in data_get
+
+    # Test POST
+    res_post = client.post("/api/data/refresh-latest")
+    assert res_post.status_code == 200
+    data_post = res_post.json()
+    assert "success" in data_post
+    assert "records_count" in data_post

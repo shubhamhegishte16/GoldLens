@@ -161,7 +161,7 @@ def fetch_date_range(
     return fetch_bhavcopy_date_range(start_date, end_date)
 
 
-@app.post("/api/data/refresh-latest")
+@app.api_route("/api/data/refresh-latest", methods=["GET", "POST"])
 def refresh_latest_data():
     """
     Attempts to fetch the latest available daily Bhavcopy from the official MCX portal.
