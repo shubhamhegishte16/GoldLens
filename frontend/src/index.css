@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-page: #FAF6EC;
+    --surface-card: #FFFDF7;
+    --border-card: #E8DFCB;
+    --shadow-soft: 0 2px 8px rgba(60, 45, 20, 0.05), 0 1px 3px rgba(60, 45, 20, 0.03);
+    
+    --sidebar-bg: #F3ECDA;
+    --sidebar-border: #E4D9C2;
+    
+    --ink-primary: #2B2A26;
+    --ink-muted: #7A7467;
+    --ink-subtle: #A39D8F;
+    
+    --gold-primary: #B8892B;
+    --gold-hover: #9C7320;
+    --gold-soft: #F1E3BF;
+    --gold-light: #FBF6E9;
+    
+    --positive: #3E7C59;
+    --positive-soft: #DCEBDD;
+    
+    --negative: #B5533C;
+    --negative-soft: #F3DDD5;
+    
+    --navy-secondary: #2F3E5C;
+    --navy-soft: #E5EAF3;
+    
+    --sage-tertiary: #8A9A7B;
+    --sage-soft: #EBF0E6;
+    
+    --warning: #C9962E;
+    --warning-soft: #FCF4DD;
+  }
+
+  body {
+    background-color: var(--bg-page);
+    color: var(--ink-primary);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .font-serif-title {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+
+  .font-mono-numbers {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Reusable card & component utilities */
+.card-cream {
+  background-color: var(--surface-card);
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  box-shadow: var(--shadow-soft);
+}
+
+.gold-badge {
+  background-color: var(--gold-soft);
+  color: var(--gold-hover);
+  border: 1px solid #E5D2A0;
+}
+
+.positive-badge {
+  background-color: var(--positive-soft);
+  color: var(--positive);
+  border: 1px solid #C4DEC7;
+}
+
+.negative-badge {
+  background-color: var(--negative-soft);
+  color: var(--negative);
+  border: 1px solid #EAC4B9;
+}
